@@ -94,10 +94,18 @@ class JoinReviewer:
             ngid, name = item
             try:
                 try:
-                    info = await client.get_group_member_info(group_id=int(ngid), user_id=int(uid), no_cache=True)
+                    # 单次探测超时封顶：部分 OneBot 实现在查询非成员时可能无响应
+                    info = await asyncio.wait_for(
+                        client.get_group_member_info(group_id=int(ngid), user_id=int(uid), no_cache=True),
+                        timeout=10,
+                    )
                 except TypeError:
-                    info = await client.get_group_member_info(group_id=int(ngid), user_id=int(uid))
+                    info = await asyncio.wait_for(
+                        client.get_group_member_info(group_id=int(ngid), user_id=int(uid)),
+                        timeout=10,
+                    )
             except Exception:
+                # 探测失败按“不在该群”处理，不阻断正常审核
                 return None
             return name if info else None
 
