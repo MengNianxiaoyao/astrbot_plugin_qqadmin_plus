@@ -118,7 +118,7 @@ class PluginConfig(ConfigNode):
     perms: dict
 
     _db_version = 3
-    _plugin_name: str = "astrbot_plugin_qqadmin"
+    _plugin_name: str = "astrbot_plugin_qqadmin_plus"
 
     def __init__(self, cfg: AstrBotConfig, context: Context):
         super().__init__(cfg)
@@ -130,6 +130,7 @@ class PluginConfig(ConfigNode):
 
         self.db_path = self.data_dir / f"qqadmin_data_v{self._db_version}.db"
         self.ban_lexicon_path = self.plugin_dir / "SensitiveLexicon.json"
+        self.global_ban_lexicon_path = self.data_dir / "global_ban_words.json"
         self.group_notice_dir = self.data_dir / "group_notice"
         self.group_notice_dir.mkdir(parents=True, exist_ok=True)
         self.curfew_file = self.data_dir / "curfew_data.json"

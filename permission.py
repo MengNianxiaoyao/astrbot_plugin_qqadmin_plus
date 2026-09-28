@@ -1,4 +1,5 @@
 import inspect
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from enum import IntEnum
 from functools import wraps
@@ -59,10 +60,14 @@ class PermissionManager:
     def __init__(self):
         self.cfg: PluginConfig | None = None
         self.db: QQAdminDB | None = None
+        self._perm_cache: dict[tuple[str, str], tuple[PermLevel, float]] = {}
+        self._perm_ttl = 10.0
 
     def lazy_init(self, config: PluginConfig, db: QQAdminDB):
         if self._initialized:
-            raise RuntimeError("PermissionManager already initialized")
+            logger.warning("PermissionManager already initialized, refreshing instead")
+            self.refresh(config, db)
+            return
         self.cfg = config
         self.db = db
         self._initialized = True
@@ -75,10 +80,17 @@ class PermissionManager:
 
     async def get_perm_level(self, event: AiocqhttpMessageEvent, user_id: str | int) -> PermLevel:
         group_id = event.get_group_id()
-        if int(group_id) == 0 or int(user_id) == 0:
+        try:
+            if not str(group_id).isdigit() or not str(user_id).isdigit() or int(group_id) == 0 or int(user_id) == 0:
+                return PermLevel.UNKNOWN
+        except Exception:
             return PermLevel.UNKNOWN
         if self.cfg and str(user_id) in self.cfg.admins_id:
             return PermLevel.SUPERUSER
+        cache_key = (str(group_id), str(user_id))
+        cached = self._perm_cache.get(cache_key)
+        if cached and time.time() - cached[1] < self._perm_ttl:
+            return cached[0]
         try:
             info = await event.bot.get_group_member_info(group_id=int(group_id), user_id=int(user_id), no_cache=True)
         except Exception:
@@ -89,13 +101,19 @@ class PermissionManager:
         level_threshold = int(group_config.get("level_threshold", 50))
         match role:
             case "owner":
-                return PermLevel.OWNER
+                lvl = PermLevel.OWNER
             case "admin":
-                return PermLevel.ADMIN
+                lvl = PermLevel.ADMIN
             case "member":
-                return PermLevel.HIGH if level >= level_threshold else PermLevel.MEMBER
+                lvl = PermLevel.HIGH if level >= level_threshold else PermLevel.MEMBER
             case _:
-                return PermLevel.UNKNOWN
+                lvl = PermLevel.UNKNOWN
+        self._perm_cache[cache_key] = (lvl, time.time())
+        # 简单容量控制
+        if len(self._perm_cache) > 500:
+            oldest = min(self._perm_cache.items(), key=lambda kv: kv[1][1])[0]
+            self._perm_cache.pop(oldest, None)
+        return lvl
 
     async def perm_block(
         self,

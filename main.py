@@ -39,16 +39,16 @@ class QQAdminPlugin(Star):
         self.db = QQAdminDB(self.cfg)
         self.db.default_cfg = self.cfg.build_group_default_config()
         self.group_cache = QQGroupInfoCache(context, self.db)
-        self.normal = NormalHandle(self.cfg, self.db)
-        self.recall = RecallHandle(self.cfg, self.db)
-        self.notice = NoticeHandle(self, self.cfg)
-        self.banpro = BanproHandle(self.cfg, self.db)
         self.global_list = QQAdminGlobalList(self.cfg.data_dir)
+        self.normal = NormalHandle(self.cfg, self.db, self.global_list)
+        self.recall = RecallHandle(self.cfg, self.db)
+        self.notice = NoticeHandle(self.cfg)
+        self.banpro = BanproHandle(self.cfg, self.db)
         self.join = JoinHandle(self.cfg, self.db, self.global_list, self.group_cache)
-        self.member = MemberHandle(self)
+        self.member = MemberHandle(self.db, self.global_list, self.text_to_image)
         self.file = FileHandle(self.cfg)
         self.curfew = CurfewHandle(self.context, self.cfg)
-        self.web = QQAdminWebController(context, self.cfg, self.db, self.group_cache, self.global_list)
+        self.web = QQAdminWebController(context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro)
         self.web.register_routes()
 
     async def initialize(self):
@@ -92,7 +92,10 @@ class QQAdminPlugin(Star):
     async def reset_config(self, event: AiocqhttpMessageEvent, group_id: str | int | None = None):
         """群管重置 <群号 | all>"""
         gid = group_id or event.get_group_id()
-        if gid == "all" and event.is_admin():
+        if gid == "all":
+            if not event.is_admin():
+                yield event.plain_result("仅超管可重置所有群的群管配置")
+                return
             await self.db.reset_to_default()
             yield event.plain_result("已重置所有群的群管配置")
         else:
@@ -122,7 +125,7 @@ class QQAdminPlugin(Star):
     @perm_required(PermLevel.ADMIN, perm_key="set_group_card")
     async def set_group_card(self, event: AiocqhttpMessageEvent, target_card: str | int = ""):
         """改名 <新昵称> @user"""
-        if result := await self.normal.set_group_card(event, target_id=target_card):
+        if result := await self.normal.set_group_card(event, target_card=target_card):
             yield event.plain_result(result)
 
     @filter.command("改头衔", alias={"头衔"})
@@ -234,10 +237,10 @@ class QQAdminPlugin(Star):
         """禁词 +词1 -词2, 带+-则增删, 不带则覆写"""
         await self.banpro.handle_ban_words(event)
 
-    @filter.command("内置禁词")
+    @filter.command("全局禁词", alias={"内置禁词"})
     @perm_required(PermLevel.ADMIN, perm_key="word_ban")
     async def handle_builtin_ban_words(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
-        """内置禁词 开/关"""
+        """全局禁词 开/关"""
         await self.banpro.handle_builtin_ban_words(event, mode)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
@@ -321,6 +324,18 @@ class QQAdminPlugin(Star):
     async def handle_no_match_reject(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
         "设置/查看是否拒绝无关键词的进群申请（无参数表示查看）"
         await self.join.handle_no_match_reject(event, mode)
+
+    @filter.command("群满拒绝")
+    @perm_required(PermLevel.ADMIN, perm_key="join")
+    async def handle_join_full_reject(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
+        "设置/查看群满时是否自动拒绝进群申请（无参数表示查看）"
+        await self.join.handle_join_full_reject(event, mode)
+
+    @filter.command("群满文案")
+    @perm_required(PermLevel.ADMIN, perm_key="join")
+    async def handle_join_full_msg(self, event: AiocqhttpMessageEvent):
+        "群满文案 <拒绝理由>"
+        await self.join.handle_join_full_msg(event)
 
     @filter.command("进群等级")
     @perm_required(PermLevel.ADMIN, perm_key="join")
@@ -411,10 +426,10 @@ class QQAdminPlugin(Star):
     async def clear_group_member(
         self,
         event: AiocqhttpMessageEvent,
-        inactive_days: int = 30,
-        under_level: int = 10,
+        inactive_days: int | None = None,
+        under_level: int | None = None,
     ):
-        "清理群友 <未发言天数> <群等级>"
+        "清理群友 [未发言天数] [群等级]，缺省用本群配置"
         await self.member.clear_group_member(event, inactive_days, under_level)
 
     @filter.command("上传群文件")
@@ -456,23 +471,20 @@ class QQAdminPlugin(Star):
         event: AiocqhttpMessageEvent,
         user_id: int,
         duration: int,
-        need_auth: bool = True,
     ):
         """
         在群聊中禁言某用户，被禁言的用户在禁言期间将无法发送消息。
         Args:
             user_id(number): 要禁言的用户QQ
             duration(number): 禁言持续时间（秒），范围为0~86400, 0表示取消禁言
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(
-                event,
-                perm_key="group_ban",
-                bot_perm=PermLevel.ADMIN,
-            ):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(
+            event,
+            perm_key="group_ban",
+            bot_perm=PermLevel.ADMIN,
+        ):
+            yield error
+            return
         if result := await self.normal.set_group_ban(event, ban_time=duration, target_id=user_id):
             yield result
 
@@ -482,23 +494,20 @@ class QQAdminPlugin(Star):
         event: AiocqhttpMessageEvent,
         target_id: int,
         target_card: str,
-        need_auth: bool = True,
     ):
         """
         给群聊中某用户设置群昵称。
         Args:
             target_id(number): 要设置群昵称的用户的QQ
             target_card(string): 要设置的群昵称
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(
-                event,
-                perm_key="set_group_card",
-                bot_perm=PermLevel.ADMIN,
-            ):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(
+            event,
+            perm_key="set_group_card",
+            bot_perm=PermLevel.ADMIN,
+        ):
+            yield error
+            return
         if result := await self.normal.set_group_card(event, target_id=target_id, target_card=target_card):
             yield result
 
@@ -508,23 +517,20 @@ class QQAdminPlugin(Star):
         event: AiocqhttpMessageEvent,
         target_id: int,
         special_title: str,
-        need_auth: bool = True,
     ):
         """
         给群聊中某用户设置专属头衔。
         Args:
             target_id(number): 要设置头衔的用户的QQ
             special_title(string): 要设置的新头衔
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(
-                event,
-                perm_key="set_group_special_title",
-                bot_perm=PermLevel.OWNER,
-            ):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(
+            event,
+            perm_key="set_group_special_title",
+            bot_perm=PermLevel.OWNER,
+        ):
+            yield error
+            return
         if result := await self.normal.set_group_special_title(event, target_id=target_id, special_title=special_title):
             yield result
 
@@ -533,18 +539,15 @@ class QQAdminPlugin(Star):
         self,
         event: AiocqhttpMessageEvent,
         enable: bool = True,
-        need_auth: bool = True,
     ):
         """
         开启或关闭群全员禁言。
         Args:
             enable(boolean): 是否开启全员禁言。
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="whole_ban", bot_perm=PermLevel.ADMIN):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="whole_ban", bot_perm=PermLevel.ADMIN):
+            yield error
+            return
         if result := await self.normal.set_group_whole_ban(event, enable):
             yield result
 
@@ -588,19 +591,16 @@ class QQAdminPlugin(Star):
         event: AiocqhttpMessageEvent,
         message_id: int,
         enable: bool = True,
-        need_auth: bool = True,
     ):
         """
         设置或取消指定消息的群精华。
         Args:
             message_id(number): 要操作的消息ID。
             enable(boolean): 是否设置为群精华，False表示取消群精华。
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="essence", bot_perm=PermLevel.ADMIN):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="essence", bot_perm=PermLevel.ADMIN):
+            yield error
+            return
         if result := await self.normal.set_essence_msg(event, enable=enable, message_id=message_id):
             yield result
 
@@ -608,17 +608,14 @@ class QQAdminPlugin(Star):
     async def llm_get_essence_msg_list(
         self,
         event: AiocqhttpMessageEvent,
-        need_auth: bool = True,
     ):
         """
         查看当前群的群精华消息列表。
         Args:
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="get_essence_msg_list", bot_perm=PermLevel.ADMIN):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="get_essence_msg_list", bot_perm=PermLevel.ADMIN):
+            yield error
+            return
         if result := await self.normal.get_essence_msg_list(event):
             yield result
 
@@ -627,18 +624,15 @@ class QQAdminPlugin(Star):
         self,
         event: AiocqhttpMessageEvent,
         group_name: str,
-        need_auth: bool = True,
     ):
         """
         设置当前群的群名称。
         Args:
             group_name(string): 要设置的新群名称。
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="set_group_name", bot_perm=PermLevel.ADMIN):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="set_group_name", bot_perm=PermLevel.ADMIN):
+            yield error
+            return
         if result := await self.normal.set_group_name(event, group_name):
             yield result
 
@@ -647,18 +641,15 @@ class QQAdminPlugin(Star):
         self,
         event: AiocqhttpMessageEvent,
         image_url: str,
-        need_auth: bool = True,
     ):
         """
         设置当前群的群头像。
         Args:
             image_url(string): 群头像图片URL或本地图片路径。
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="set_group_portrait", bot_perm=PermLevel.ADMIN):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="set_group_portrait", bot_perm=PermLevel.ADMIN):
+            yield error
+            return
         if result := await self.normal.set_group_portrait(event, image_url=image_url):
             yield result
 
@@ -668,19 +659,16 @@ class QQAdminPlugin(Star):
         event: AiocqhttpMessageEvent,
         content: str,
         image_url: str = "",
-        need_auth: bool = True,
     ):
         """
         发布一条群公告。
         Args:
             content(string): 群公告正文。
             image_url(string): 可选的公告图片URL或本地图片路径。
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="send_group_notice", bot_perm=PermLevel.ADMIN):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="send_group_notice", bot_perm=PermLevel.ADMIN):
+            yield error
+            return
         if result := await self.notice.send_group_notice(event, content=content, image_url=image_url):
             yield result
 
@@ -688,17 +676,14 @@ class QQAdminPlugin(Star):
     async def llm_get_group_notice(
         self,
         event: AiocqhttpMessageEvent,
-        need_auth: bool = True,
     ):
         """
         查看当前群的群公告。
         Args:
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="get_group_notice", bot_perm=PermLevel.MEMBER):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="get_group_notice", bot_perm=PermLevel.MEMBER):
+            yield error
+            return
         if result := await self.notice.get_group_notice(event):
             yield result
 
@@ -707,18 +692,15 @@ class QQAdminPlugin(Star):
         self,
         event: AiocqhttpMessageEvent,
         path: str,
-        need_auth: bool = True,
     ):
         """
         上传本地文件到当前群的群文件。
         Args:
             path(string): 本地文件路径，可包含群文件夹路径。
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="upload_group_file", bot_perm=PermLevel.MEMBER):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="upload_group_file", bot_perm=PermLevel.MEMBER):
+            yield error
+            return
         if result := await self.file.upload_group_file(event, path):
             yield result
 
@@ -727,18 +709,15 @@ class QQAdminPlugin(Star):
         self,
         event: AiocqhttpMessageEvent,
         path: str,
-        need_auth: bool = True,
     ):
         """
         删除当前群的群文件或群文件夹。
         Args:
             path(string): 群文件名、文件夹名或文件夹/文件名。
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="delete_group_file", bot_perm=PermLevel.ADMIN):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="delete_group_file", bot_perm=PermLevel.ADMIN):
+            yield error
+            return
         if result := await self.file.delete_group_file(event, path):
             yield result
 
@@ -747,17 +726,14 @@ class QQAdminPlugin(Star):
         self,
         event: AiocqhttpMessageEvent,
         path: str = "",
-        need_auth: bool = True,
     ):
         """
         查看当前群的群文件或群文件夹。
         Args:
             path(string): 可选的文件名、文件夹名或文件夹/文件名，留空查看根目录。
-            need_auth(boolean): 是否要进行鉴权，机器人自行发起操作则填False, 当前用户要发起操作则填True。
         """
-        if need_auth:
-            if error := await perm_manager.llm_perm_block(event, perm_key="view_group_file", bot_perm=PermLevel.MEMBER):
-                yield error
-                return
+        if error := await perm_manager.llm_perm_block(event, perm_key="view_group_file", bot_perm=PermLevel.MEMBER):
+            yield error
+            return
         if result := await self.file.view_group_file(event, path):
             yield result

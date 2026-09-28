@@ -27,12 +27,21 @@ export function createThemeController({ getContext, onModeChange }) {
       : null;
 
   let preference = loadPreference();
+  let effectiveMode = "light";
   let detachSystem = null;
 
-  const bridgeMode = (context) =>
-    context?.theme === "dark" || context?.theme === "light"
+  // Dashboard 通过 context 下发主题：新版用 isDark，旧版用 theme 字符串，两者都兼容
+  const bridgeMode = (context) => {
+    if (!context || typeof context !== "object") {
+      return null;
+    }
+    if (typeof context.isDark === "boolean") {
+      return context.isDark ? "dark" : "light";
+    }
+    return context.theme === "dark" || context.theme === "light"
       ? context.theme
       : null;
+  };
 
   const systemMode = () => (themeMediaQuery?.matches ? "dark" : "light");
 
@@ -44,12 +53,14 @@ export function createThemeController({ getContext, onModeChange }) {
   }
 
   function apply(mode) {
+    effectiveMode = mode;
     document.documentElement.dataset.theme = mode;
     document.documentElement.style.colorScheme = mode;
   }
 
   function sync(context) {
     apply(resolveMode(context));
+    onModeChange?.();
   }
 
   function onSystemChange() {
@@ -79,7 +90,6 @@ export function createThemeController({ getContext, onModeChange }) {
       "auto";
     persistPreference(preference);
     sync(getContext());
-    onModeChange?.();
   }
 
   return {
@@ -90,11 +100,7 @@ export function createThemeController({ getContext, onModeChange }) {
       detachSystem?.();
     },
     getButtonLabel() {
-      return preference === "dark"
-        ? "主题：深色"
-        : preference === "light"
-          ? "主题：浅色"
-          : "主题：自动";
+      return effectiveMode === "dark" ? "主题：深色" : "主题：浅色";
     },
   };
 }

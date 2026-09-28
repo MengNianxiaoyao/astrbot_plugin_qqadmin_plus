@@ -36,6 +36,20 @@ async def get_nickname(event: AiocqhttpMessageEvent, user_id: int | str) -> str:
     return info.get("card") or info.get("nickname") or info.get("nick") or str(user_id)
 
 
+async def resolve_allow_ids(db, global_list, gid: str) -> list:
+    """取本群进群白名单（全局开关开启时返回全局白名单）"""
+    if await db.get(gid, "use_global_allow", False):
+        return list(global_list.get("allow"))
+    return await db.get(gid, "allow_ids", [])
+
+
+async def resolve_block_ids(db, global_list, gid: str) -> list:
+    """取本群进群黑名单（全局开关开启时返回全局黑名单）"""
+    if await db.get(gid, "use_global_block", False):
+        return list(global_list.get("block"))
+    return await db.get(gid, "block_ids", [])
+
+
 def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
     """获取被at者们的id列表"""
     return [str(seg.qq) for seg in event.get_messages() if (isinstance(seg, At) and str(seg.qq) != event.get_self_id())]
@@ -85,20 +99,28 @@ def format_time(timestamp):
     return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
 
 
-async def download_file(url: str, save_path: Path) -> Path | None:
-    """下载文件并保存到本地。优先使用原协议，失败后回退到另一种协议（http/https 互转）。"""
+async def download_file(url: str, save_path: Path, max_size: int = 10 * 1024 * 1024, timeout_secs: int = 10) -> Path | None:
+    """下载文件并保存到本地。优先使用原协议，失败后回退到另一种协议（http/https 互转）。带超时与大小限制。"""
     candidates = [url]
     if url.startswith("https://"):
         candidates.append("http://" + url[len("https://") :])
     elif url.startswith("http://"):
         candidates.append("https://" + url[len("http://") :])
 
-    for candidate in candidates:
-        try:
-            async with ClientSession() as client:
-                response = await client.get(candidate)
+    async with ClientSession() as client:
+        for candidate in candidates:
+            try:
+                response = await client.get(candidate, timeout=timeout_secs)
                 response.raise_for_status()
+                # 预检 Content-Length
+                clen = response.headers.get("Content-Length")
+                if clen and clen.isdigit() and int(clen) > max_size:
+                    logger.warning(f"文件过大拒绝下载({candidate} {clen} > {max_size})")
+                    continue
                 file = await response.read()
+                if len(file) > max_size:
+                    logger.warning(f"文件过大拒绝保存({candidate} {len(file)} > {max_size})")
+                    continue
 
                 await anyio.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -107,8 +129,8 @@ async def download_file(url: str, save_path: Path) -> Path | None:
 
                 logger.info(f"文件已保存: {save_path}")
                 return save_path
-        except Exception as e:
-            logger.error(f"文件下载失败({candidate}): {e}")
+            except Exception as e:
+                logger.error(f"文件下载失败({candidate}): {e}")
 
     return None
 
@@ -126,7 +148,11 @@ def extract_image_url(chain: list[BaseMessageComponent]) -> str | None:
 
 
 def parse_bool(mode: str | bool | None, default: bool = False):
-    """解析布尔值"""
+    """解析布尔值；输入为 None 时返回 None，调用方可据此区分查看与设置"""
+    if mode is None:
+        return None
+    if isinstance(mode, bool):
+        return mode
     mode = str(mode).strip().lower()
     match mode:
         case "开" | "开启" | "启用" | "on" | "true" | "1" | "是" | "真":
@@ -140,11 +166,10 @@ def parse_bool(mode: str | bool | None, default: bool = False):
 # 匹配 [CQ:type] 或 [CQ:type,param=val,...]; param 部分可选,兼容无参 CQ
 _CQ_PATTERN = re.compile(r"\[CQ:(\w+)(?:,([^\]]*))?\]")
 
-# 允许的本地图片根目录由调用方传入时校验;此处仅作基础存在性校验,
-# 真正的越权防护由配置层(仅群管可改欢迎词)承担,不在此处强制白名单。
+# 允许的本地图片根目录由调用方传入时校验;默认仅允许 data/plugin 目录
 
 
-def parse_cq_to_chain(text: str) -> list:
+def parse_cq_to_chain(text: str, allowed_roots: list[Path] | None = None) -> list:
     """将含 CQ 码的文本解析为 AstrBot 消息组件列表.
 
     支持:
@@ -199,12 +224,35 @@ def parse_cq_to_chain(text: str) -> list:
                     logger.warning(f"CQ image URL 解析失败: {e}, 原文: {raw}")
                     chain.append(Plain(raw))
             else:
-                # 本地路径:支持 file= 传入的绝对/相对路径
-                # 兼容 Windows 路径中可能含的转义,此处不再二次转义
+                # 本地路径: 限制在 allowed_roots 内，防止任意文件读取
                 p = Path(file_path)
                 try:
+                    resolved = p.resolve()
+                    if allowed_roots:
+
+                        def _is_allowed(path: Path) -> bool:
+                            for root in allowed_roots:
+                                try:
+                                    if path.is_relative_to(root.resolve()):
+                                        return True
+                                except AttributeError:
+                                    # py<3.9 fallback
+                                    try:
+                                        path.relative_to(root.resolve())
+                                        return True
+                                    except ValueError:
+                                        continue
+                                except ValueError:
+                                    continue
+                            return False
+
+                        if not _is_allowed(resolved):
+                            logger.warning(f"CQ image 越权访问已拦截: {raw}")
+                            chain.append(Plain("[图片加载失败]"))
+                            last_pos = match.end()
+                            continue
                     if p.exists() and p.is_file():
-                        chain.append(Image.fromFileSystem(str(p.resolve())))
+                        chain.append(Image.fromFileSystem(str(resolved)))
                     else:
                         logger.warning(f"CQ image 本地文件不存在,已省略: {raw}")
                         chain.append(Plain("[图片加载失败]"))

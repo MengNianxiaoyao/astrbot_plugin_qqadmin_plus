@@ -7,67 +7,130 @@
     <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-    <div class="page-shell">
-        <section class="workspace-shell">
+    <div class="app">
+        <aside class="sidebar">
+            <div class="brand">
+                <span class="brand-badge">Q</span>
+                <div class="brand-text">
+                    <strong>QQ 群管</strong>
+                </div>
+            </div>
+
             <div class="view-tabs" role="tablist">
                 <button class="view-tab is-active" data-view="group" role="tab" aria-selected="true">群配置</button>
                 <button class="view-tab" data-view="global" role="tab" aria-selected="false">全局配置</button>
             </div>
 
+            <div class="search-wrap" id="groupSearchWrap">
+                <input id="groupSearchInput" type="search" placeholder="输入群名或群号筛选" aria-label="搜索群" />
+                <span id="groupListCount">0 个群</span>
+            </div>
+
+            <nav id="groupListPanel" class="side-nav">
+                <div id="groupList" class="group-list empty-state">
+                    群列表加载后会显示在这里。
+                </div>
+            </nav>
+
+            <div id="globalSidePanel" class="is-hidden">
+                <div class="global-list-tabs" role="tablist">
+                    <button class="global-list-tab is-active" data-global-type="allow" role="tab" aria-selected="true">白名单</button>
+                    <button class="global-list-tab" data-global-type="block" role="tab" aria-selected="false">黑名单</button>
+                    <button class="global-list-tab" data-global-type="ban-words" role="tab" aria-selected="false">全局禁词</button>
+                </div>
+            </div>
+            <div class="sidebar-foot">
+                <button class="ghost-button" id="refreshGroupsBtn">同步群列表</button>
+                <button class="ghost-button" id="toggleThemeBtn">主题：跟随系统</button>
+            </div>
+            <div class="sidebar-foot" id="groupActions">
+                <button class="ghost-button" id="resetGroupBtn">恢复当前项默认值</button>
+                <button class="primary-button" id="saveGroupBtn">保存当前项配置</button>
+            </div>
+            <div class="sidebar-foot is-hidden" id="globalListSideActions">
+                <button class="ghost-button" id="appendGlobalListBtn">添加保存</button>
+                <button class="primary-button" id="overwriteGlobalListBtn">覆写保存</button>
+            </div>
+            <div class="sidebar-foot is-hidden" id="globalBanWordsSideActions">
+                <button class="ghost-button" id="appendGlobalBanWordsBtn">添加保存</button>
+                <button class="primary-button" id="overwriteGlobalBanWordsBtn">覆写保存</button>
+            </div>
+        </aside>
+
+        <main class="main">
+            <header class="topbar">
+                <div class="title-group">
+                    <h1 id="currentGroupName">未选择群</h1>
+                    <div id="currentGroupMeta"></div>
+                </div>
+            </header>
+
             <div class="workspace-grid">
-                <aside id="groupListPanel" class="group-list-panel">
-                    <div class="toolbar-stack">
-                        <div class="workspace-actions">
-                            <div class="workspace-status">
-                                <button class="ghost-button" id="toggleThemeBtn">主题：自动</button>
-                                <button class="ghost-button" id="refreshGroupsBtn">同步群列表</button>
+                <section class="panel" id="groupDetailPanel">
+                    <div id="groupForm" class="form-stack"></div>
+
+                    <div id="globalListPanel" class="is-hidden">
+                        <div id="globalListContent">
+                            <div class="card list-card">
+                                <div class="search-row">
+                                    <div class="field-control">
+                                        <input id="globalListSearchInput" type="search" placeholder="搜索QQ号" aria-label="搜索名单" />
+                                    </div>
+                                    <button class="ghost-button" id="deleteSelectedListBtn">删除选中</button>
+                                </div>
+                                <div id="globalListDisplay" class="global-list-display"></div>
                             </div>
-                        </div>
-                        <label class="toolbar-field grow">
-                            <input id="groupSearchInput" type="search" placeholder="输入群名或群号筛选" aria-label="搜索群" />
-                        </label>
-                    </div>
-
-                    <div class="list-meta-row">
-                        <span id="groupListCount">0 个群</span>
-                    </div>
-
-                    <div id="groupList" class="group-list empty-state">
-                        群列表加载后会显示在这里。
-                    </div>
-                </aside>
-
-                <section id="groupDetailPanel" class="group-detail-panel">
-                    <h3 id="currentGroupName" class="detail-page-title">未选择群</h3>
-                    <div class="detail-stack">
-                        <div id="groupForm" class="form-stack"></div>
-
-                        <div id="globalListPanel" class="detail-stack is-hidden">
-                            <div class="global-list-tabs" role="tablist">
-                                <button class="global-list-tab is-active" data-global-type="allow" role="tab" aria-selected="true">白名单</button>
-                                <button class="global-list-tab" data-global-type="block" role="tab" aria-selected="false">黑名单</button>
-                            </div>
-                            <div id="globalListDisplay" class="global-list-display"></div>
-                            <div class="field">
+                            <div class="field batch-field">
                                 <div class="field-label">添加QQ（支持批量导入）</div>
                                 <div class="field-control">
                                     <textarea id="globalListBatchInput" placeholder="每行一个QQ号"></textarea>
                                 </div>
                             </div>
-                            <div class="sticky-actions">
-                                <button class="ghost-button" id="appendGlobalListBtn">添加保存</button>
-                                <button class="primary-button" id="overwriteGlobalListBtn">覆写保存</button>
-                            </div>
                         </div>
 
-                        <div class="sticky-actions" id="groupActions">
-                            <button class="ghost-button" id="resetGroupBtn">恢复当前项默认值</button>
-                            <button class="primary-button" id="saveGroupBtn">保存当前项配置</button>
+                        <div id="globalBanWordsPanel" class="is-hidden">
+                            <div class="ban-word-panels">
+                                <div class="card global-ban-words-section">
+                                    <div class="ban-word-panel-header">
+                                        <div>
+                                            <div class="field-label">全局禁词</div>
+                                            <div class="field-hint">词库保存在插件数据目录，不会修改插件内置词库。</div>
+                                        </div>
+                                        <div class="ban-word-header-actions">
+                                            <button class="ghost-button" id="deleteSelectedBanWordsBtn">删除选中</button>
+                                            <button class="ghost-button" id="restoreBuiltinBanWordsBtn">恢复内置禁词</button>
+                                        </div>
+                                    </div>
+                                    <div id="globalBanWordsDisplay" class="global-list-display"></div>
+                                </div>
+
+                                <div class="card builtin-ban-words-section">
+                                    <div class="ban-word-list-header">
+                                        <div>
+                                            <div class="ban-word-title-row">
+                                                <div class="field-label">内置禁词</div>
+                                                <span id="builtinBanWordsVersion" class="soft-badge"></span>
+                                            </div>
+                                            <div class="field-hint">点击词条导入全局禁词。已导入词条不会在这里显示。</div>
+                                        </div>
+                                        <button class="primary-button" id="importSelectedBanWordsBtn">导入选中</button>
+                                    </div>
+                                    <div id="builtinBanWordsDisplay" class="global-list-display"></div>
+                                </div>
+                            </div>
+                            <div class="card batch-card">
+                                <div class="field batch-field">
+                                    <div class="field-label">添加禁词（支持批量）</div>
+                                    <div class="field-control">
+                                        <textarea id="globalBanWordsBatchInput" placeholder="每行一个禁词"></textarea>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </section>
             </div>
-        </section>
+        </main>
     </div>
 
     <div class="toast-layer" id="toastLayer"></div>

@@ -16,6 +16,24 @@ class FileHandle:
     def __init__(self, config: PluginConfig):
         self.data_dir = config.file_dir
 
+    @staticmethod
+    def _folders_of(response) -> list:
+        """容错取出响应中的文件夹列表"""
+        if isinstance(response, dict):
+            folders = response.get("folders", [])
+            if isinstance(folders, list):
+                return [f for f in folders if isinstance(f, dict)]
+        return []
+
+    @staticmethod
+    def _files_of(response) -> list:
+        """容错取出响应中的文件列表"""
+        if isinstance(response, dict):
+            files = response.get("files", [])
+            if isinstance(files, list):
+                return [f for f in files if isinstance(f, dict)]
+        return []
+
     async def _parse_path(self, event: AiocqhttpMessageEvent, path: str) -> tuple[str | None, str | None]:
         """
         解析路径，返回 (folder_name, file_name)
@@ -49,9 +67,9 @@ class FileHandle:
             folder_kind, folder_name = resolve_index(left, "folder")
             folder_name = folder_name or left  # 左边不是数字就直接当字符串用
 
-            # 如果右边是数字，需要进入对应文件夹再解析
+            # 如果右边是数字，需要进入对应文件夹再解析（复用已拉取的 response 避免二次请求）
             if right.isdigit() and folder_name:
-                target_folder = await self._get_folder(event, folder_name)
+                target_folder = next((f for f in self._folders_of(response) if f.get("folder_name") == folder_name), None)
                 if target_folder:
                     folder_files = await event.bot.get_group_files_by_folder(
                         group_id=int(event.get_group_id()),
@@ -66,40 +84,45 @@ class FileHandle:
             # 如果右边不是纯数字或者没解析到，就直接当文件名
             return folder_name, right
 
-        elif "." in path:
-            return None, path
-
         else:
+            # 先按实际目录判断，避免含点的文件夹名（如 v1.0）被误判为文件
+            folder_names = {name for kind, name in mapping.values() if kind == "folder"}
+            file_names = {name for kind, name in mapping.values() if kind == "file"}
+            if path in folder_names:
+                return path, None
+            if path in file_names:
+                return None, path
             if path.isdigit():
                 idx = int(path)
                 if idx in mapping:
                     kind, name = mapping[idx]
                     return (name, None) if kind == "folder" else (None, name)
                 return None, None
-            return path, None
+            # 兜底：含点按文件，否则按文件夹
+            return (None, path) if "." in path else (path, None)
 
     async def _get_folder(self, event: AiocqhttpMessageEvent, folder_name: str) -> dict | None:
         """从根目录下找到指定文件夹, 返回文件夹数据"""
         response = await event.bot.get_group_root_files(group_id=int(event.get_group_id()))
         return next(
-            (folder for folder in response["folders"] if folder_name == folder["folder_name"]),
+            (folder for folder in self._folders_of(response) if folder_name == folder.get("folder_name")),
             None,
         )
 
-    def _get_folder_info(self, data: dict, title: str) -> tuple[str, dict[int, str]]:
+    def _get_folder_info(self, data: dict, title: str) -> tuple[str, dict[int, tuple[str, str]]]:
         """从响应数据里提取文件夹和文件，每个文件夹下文件序号从 1 开始"""
         info = [title]
         mapping = {}
 
         idx = 1
-        for folder in data["folders"]:
-            info.append(f"▶{idx}. {folder['folder_name']}")
-            mapping[idx] = ("folder", folder["folder_name"])
+        for folder in self._folders_of(data):
+            info.append(f"▶{idx}. {folder.get('folder_name', '未知')}")
+            mapping[idx] = ("folder", folder.get("folder_name", ""))
             idx += 1
 
-        for file in data["files"]:
-            info.append(f"📄{idx}. {file['file_name']}")
-            mapping[idx] = ("file", file["file_name"])
+        for file in self._files_of(data):
+            info.append(f"📄{idx}. {file.get('file_name', '未知')}")
+            mapping[idx] = ("file", file.get("file_name", ""))
             idx += 1
 
         return "\n".join(info), mapping
@@ -107,7 +130,10 @@ class FileHandle:
     def _format_file_info(self, file: dict) -> str:
         """格式化文件信息"""
         lines = [f"【📄 {file.get('file_name', '未知')}】"]
-        size = int(file.get("size", "0"))
+        try:
+            size = int(file.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
         if size < 1024**2:
             lines.append(f"文件大小: {size / 1024:.2f} KB")
         else:
@@ -133,7 +159,7 @@ class FileHandle:
         if not target_folder:
             return None, None
         response = await event.bot.get_group_files_by_folder(group_id=int(event.get_group_id()), folder_id=target_folder["folder_id"])
-        file = next((f for f in response["files"] if f["file_name"] == file_name), None)
+        file = next((f for f in self._files_of(response) if f.get("file_name") == file_name), None)
         return target_folder, file
 
     async def _save_temp_file(self, event: AiocqhttpMessageEvent, file_name: str):
@@ -189,8 +215,10 @@ class FileHandle:
 
         folder_id = None
         if folder_name:
-            if target_folder := await self._ensure_folder(event, folder_name):
-                folder_id = target_folder["folder_id"]
+            target_folder = await self._ensure_folder(event, folder_name)
+            if not target_folder:
+                return f"群文件夹【{folder_name}】创建或查找失败，已取消上传"
+            folder_id = target_folder["folder_id"]
 
         try:
             await client.upload_group_file(
@@ -221,7 +249,7 @@ class FileHandle:
             else:
                 response = await event.bot.get_group_root_files(group_id=group_id)
                 file = next(
-                    (f for f in response["files"] if file_name == f["file_name"]),
+                    (f for f in self._files_of(response) if file_name == f.get("file_name")),
                     None,
                 )
             if file:
@@ -265,7 +293,7 @@ class FileHandle:
                 # 根目录单文件
                 response = await client.get_group_root_files(group_id=group_id)
                 if file := next(
-                    (f for f in response["files"] if folder_name == f["file_name"]),
+                    (f for f in self._files_of(response) if folder_name == f.get("file_name")),
                     None,
                 ):
                     return self._format_file_info(file)
@@ -275,7 +303,7 @@ class FileHandle:
             # 根目录文件
             response = await client.get_group_root_files(group_id=group_id)
             if file := next(
-                (f for f in response["files"] if file_name == f["file_name"]),
+                (f for f in self._files_of(response) if file_name == f.get("file_name")),
                 None,
             ):
                 return self._format_file_info(file)

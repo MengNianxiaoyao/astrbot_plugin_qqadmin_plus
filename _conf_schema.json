@@ -6,13 +6,13 @@
     "type": "object",
     "items": {
       "join_switch": {
-        "description": "进群审核",
+        "description": "总开关",
         "hint": "开启后，进群退群模块的功能才会在当前群聊生效，群主、群管理可用命令 “进群审核 开/关” 为当前群聊设置",
         "type": "bool",
         "default": true
       },
       "join_min_level": {
-        "description": "进群等级门槛",
+        "description": "等级门槛",
         "hint": "当申请人的QQ等级低于此值时，自动拒绝进群申请。设为0表示不启用此功能。可通过群内命令为当前群聊设置",
         "type": "int",
         "slider": {
@@ -23,7 +23,7 @@
         "default": 8
       },
       "join_max_time": {
-        "description": "进群最大尝试次数",
+        "description": "最大尝试次数",
         "hint": "当用户申请进行的次数超过此值时，自动拒绝进群申请。可通过群内命令为当前群聊设置",
         "type": "int",
         "slider": {
@@ -34,7 +34,7 @@
         "default": 3
       },
       "join_accept_words": {
-        "description": "进群白词",
+        "description": "白词",
         "hint": "用户申请加群时, 若进群答案中包含这些关键词，则自动通过申请",
         "type": "list",
         "default": [
@@ -43,7 +43,7 @@
         ]
       },
       "join_reject_words": {
-        "description": "进群黑词",
+        "description": "黑词",
         "hint": "用户申请加群时, 若进群答案中包含这些关键词，则自动拒绝申请",
         "type": "list",
         "default": [
@@ -52,55 +52,98 @@
         ]
       },
       "join_no_match_msg": {
-        "description": "自动拒绝验证消息为空的进群申请",
+        "description": "验证为空拒绝",
         "hint": "当用户申请加群时，验证消息为空时自动拒绝",
         "type": "bool",
         "default": false
       },
       "join_no_match_reject": {
-        "description": "自动拒绝未命中白词的进群申请",
+        "description": "未命中白词拒绝",
         "hint": "当用户申请加群时，没命中进群关键词，则自动驳回申请",
         "type": "bool",
         "default": false
       },
+      "join_full_reject": {
+        "description": "群满自动拒绝",
+        "hint": "群人数已满时自动拒绝进群申请",
+        "type": "bool",
+        "default": true
+      },
+      "join_full_msg": {
+        "description": "群满拒绝文案",
+        "hint": "群人数已满自动拒绝进群申请时，向申请人展示的拒绝理由",
+        "type": "string",
+        "default": "群人数已满"
+      },
+      "join_single_group": {
+        "description": "禁止多群加入",
+        "hint": "开启后，已加入或正在申请同账号管理的其他群聊的QQ号，进群时自动拒绝",
+        "type": "bool",
+        "default": false
+      },
+      "join_silent_reasons": {
+        "description": "免通知类型",
+        "hint": "勾选后，自动批准/驳回结果命中时不发送通知",
+        "type": "list",
+        "options": [
+          { "value": "full", "label": "群满拒绝" },
+          { "value": "allow", "label": "白名单通过" },
+          { "value": "white_word", "label": "命中白词通过" },
+          { "value": "block", "label": "黑名单" },
+          { "value": "multi_group", "label": "多群加入" },
+          { "value": "empty_msg", "label": "验证为空" },
+          { "value": "level_low", "label": "等级过低" },
+          { "value": "black_word", "label": "命中黑词" },
+          { "value": "black_word_block", "label": "命中黑词已拉黑" },
+          { "value": "max_fail", "label": "超次已拉黑" },
+          { "value": "no_match", "label": "未命中驳回" }
+        ],
+        "default": [
+          "full",
+          "allow",
+          "white_word",
+          "block",
+          "empty_msg"
+        ]
+      },
       "reject_word_block": {
-        "description": "命中进群黑词自动拉黑",
+        "description": "命中黑词拉黑",
         "hint": "当用户因触发进群黑词而被拒绝进群时，自动拉黑该用户",
         "type": "bool",
         "default": false
       },
       "allow_ids": {
-        "description": "进群白名单",
+        "description": "白名单",
         "hint": "用户加入群聊时，若用户QQ在白名单中，则自动通过，退群时也不会被自动拉黑",
         "type": "list",
         "default": []
       },
       "block_ids": {
-        "description": "进群黑名单",
+        "description": "黑名单",
         "hint": "用户加入群聊时，若用户QQ在黑名单中，则自动拒绝",
         "type": "list",
         "default": []
       },
       "use_global_allow": {
-        "description": "使用全局白名单",
+        "description": "全局白名单",
         "hint": "开启后，使用全局白名单（JSON文件）替代进群白名单",
         "type": "bool",
         "default": false
       },
       "use_global_block": {
-        "description": "使用全局黑名单",
+        "description": "全局黑名单",
         "hint": "开启后，使用全局黑名单（JSON文件）替代进群黑名单，自动拉黑操作也将写入全局黑名单",
         "type": "bool",
         "default": false
       },
       "join_welcome": {
-        "description": "进群欢迎词",
+        "description": "欢迎词",
         "hint": "发给新群友的欢迎词, 支持@和图片CQ码, 支持变量: {nickname}、{qq}, 示例：[CQ:at,qq={qq}] 欢迎{nickname}加入群聊",
         "type": "string",
         "default": ""
       },
       "join_ban_time": {
-        "description": "进群禁言时长",
+        "description": "进群禁言",
         "hint": "单位为秒，新成员进群时，自动禁言该成员",
         "type": "int",
         "slider": {
@@ -111,25 +154,25 @@
         "default": 0
       },
       "leave_notify": {
-        "description": "主动退群通知",
+        "description": "退群通知",
         "hint": "当用户主动退群时，向群内通报",
         "type": "bool",
         "default": false
       },
       "leave_block": {
-        "description": "主动退群拉黑",
+        "description": "退群拉黑",
         "hint": "当用户主动退群时，自动拉黑（即添加到进群黑名单）",
         "type": "bool",
         "default": false
       },
       "builtin_ban": {
-        "description": "启用内置禁词",
-        "hint": "插件内置了一个敏感词库, 如需自定义请自行修改：data/plugins/astrbot_plugin_qqadmin/SensitiveLexicon.json, 不建议开启，让群管理员通过命令“ 内置禁词 开/关 ”来为当前群聊设置",
+        "description": "全局禁词",
+        "hint": "全局禁词在网页面板中维护，保存在插件数据目录，不会修改插件内置词库。可通过命令“全局禁词 开/关”控制当前群是否启用",
         "type": "bool",
         "default": false
       },
       "custom_ban_words": {
-        "description": "群内自定义的违禁词",
+        "description": "自定义禁词",
         "hint": "",
         "type": "list",
         "default": [
@@ -138,7 +181,7 @@
         ]
       },
       "word_ban_time": {
-        "description": "触发禁词时的禁言时长",
+        "description": "禁词禁言时长",
         "hint": "触发违禁词则禁言发送者，单位：秒，设置为 0 表示不禁言",
         "type": "int",
         "slider": {
@@ -149,7 +192,7 @@
         "default": 360
       },
       "spamming_ban_time": {
-        "description": "刷屏禁言时长（秒）",
+        "description": "刷屏禁言",
         "hint": "当用户刷屏时触发禁言该用户，设置为 0 表示不启用此功能",
         "type": "int",
         "slider": {
@@ -158,17 +201,45 @@
           "step": 60
         },
         "default": 0
+      },
+      "clear_inactive_days": {
+        "description": "清理未发言天数",
+        "hint": "清理群友命令未指定天数时使用的默认值：超过此天数无发言且等级低于阈值的成员列入清理候选",
+        "type": "int",
+        "slider": {
+          "min": 0,
+          "max": 365,
+          "step": 1
+        },
+        "default": 30
+      },
+      "clear_under_level": {
+        "description": "清理等级阈值",
+        "hint": "清理群友命令未指定等级时使用的默认值：群等级低于此值的成员列入清理候选",
+        "type": "int",
+        "slider": {
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        "default": 10
+      },
+      "clear_skip_allow": {
+        "description": "清理跳过白名单",
+        "hint": "开启后，清理群友时跳过白名单成员；关闭则白名单成员同样列入清理候选",
+        "type": "bool",
+        "default": true
       }
     }
   },
   "admin_audit": {
-    "description": "进群事件仅通知bot管理员",
+    "description": "仅通知管理员",
     "hint": "如果开启，则进群事件仅通知bot管理员，不再将通知发送在对应群聊",
     "type": "bool",
     "default": false
   },
   "random_ban_time": {
-    "description": "随机禁言配置",
+    "description": "随机禁言",
     "hint": "若禁言命令未指定禁言时长，则使用随机时长，时长范围如下，单位为秒，用~表示范围",
     "type": "string",
     "default": "30~300"
@@ -203,7 +274,7 @@
     }
   },
   "llm_get_msg_count": {
-    "description": "取名指令获取消息的默认轮数",
+    "description": "取名消息轮数",
     "hint": "取名指令会爬取群聊的聊天记录进行分析，每轮爬200条消息，默认爬轮数10轮， 轮数可调",
     "type": "int",
     "slider": {
@@ -214,7 +285,7 @@
     "default": 10
   },
   "level_threshold": {
-    "description": "高等级成员阈值设置",
+    "description": "高等级阈值",
     "hint": "群等级高于此阈值的群成员，将被判定为“高等级成员”",
     "type": "int",
     "slider": {
@@ -511,7 +582,7 @@
           "高等级成员",
           "成员"
         ],
-        "default": "高等级成员"
+        "default": "管理员"
       },
       "welcome": {
         "description": "进群欢迎与禁言",
@@ -598,6 +669,93 @@
           "成员"
         ],
         "default": "成员"
+      }
+    }
+  },
+  "groups": {
+    "description": "面板分组定义",
+    "hint": "仅用于Web面板分组展示（组名/组说明/成员/排序），不参与配置存储，请勿修改键名",
+    "type": "object",
+    "items": {
+      "基础审核": {
+        "description": "进群准入的基础规则：总开关、等级与次数门槛、群满与多群限制及通知设置",
+        "type": "list",
+        "default": [
+          "join_switch",
+          "join_min_level",
+          "join_max_time",
+          "join_full_reject",
+          "join_full_msg",
+          "join_single_group",
+          "reject_word_block",
+          "join_silent_reasons",
+          "admin_audit"
+        ]
+      },
+      "关键词审核": {
+        "description": "按验证消息关键词自动通过或驳回，支持命中黑词拉黑",
+        "type": "list",
+        "default": [
+          "join_accept_words",
+          "join_reject_words",
+          "join_no_match_msg",
+          "join_no_match_reject"
+        ]
+      },
+      "黑白名单": {
+        "description": "名单命中直接通过或拒绝，可切换使用全局名单",
+        "type": "list",
+        "default": [
+          "allow_ids",
+          "block_ids",
+          "use_global_allow",
+          "use_global_block"
+        ]
+      },
+      "欢迎与退群": {
+        "description": "新成员欢迎与禁言、主动退群通知与拉黑",
+        "type": "list",
+        "default": [
+          "join_welcome",
+          "join_ban_time",
+          "leave_notify",
+          "leave_block"
+        ]
+      },
+      "违禁词管理": {
+        "description": "禁词库开关、自定义禁词及触发后的禁言时长",
+        "type": "list",
+        "default": [
+          "builtin_ban",
+          "custom_ban_words",
+          "word_ban_time",
+          "spamming_ban_time"
+        ]
+      },
+      "清理群友": {
+        "description": "清理群友命令的默认过滤条件与白名单策略",
+        "type": "list",
+        "default": [
+          "clear_inactive_days",
+          "clear_under_level",
+          "clear_skip_allow"
+        ]
+      },
+      "其他设置": {
+        "description": "随机禁言、取名轮数、高等级阈值等杂项",
+        "type": "list",
+        "default": [
+          "random_ban_time",
+          "llm_get_msg_count",
+          "level_threshold"
+        ]
+      },
+      "投票禁言": {
+        "description": "用于投票禁言",
+        "type": "list",
+        "default": [
+          "vote_ban"
+        ]
       }
     }
   }

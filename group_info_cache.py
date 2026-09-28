@@ -36,6 +36,7 @@ class QQGroupInfoCache:
         self._lock = asyncio.Lock()
         self._bot_role_lock = asyncio.Lock()
         self._last_refresh_at = 0.0
+        self._last_refresh_error: str | None = None
         self._group_list_cache: list[dict[str, Any]] = []
         self._group_detail_cache: dict[str, dict[str, Any]] = {}
         self._group_detail_ts: dict[str, float] = {}
@@ -115,20 +116,38 @@ class QQGroupInfoCache:
             merged_groups: dict[str, dict[str, Any]] = {}
             group_clients: dict[str, Any] = {}
             missing_detail_group_ids: set[str] = set()
+            refresh_errors: list[str] = []
 
-            for client in self._iter_clients():
+            clients = self._iter_clients()
+            if not clients:
+                logger.warning("No aiocqhttp client available, skip QQ group list refresh and use cached groups only")
+
+            for index, client in enumerate(clients):
+                label = self._describe_client(index, client)
                 try:
                     result = await client.call_action("get_group_list")
-                    for item in self._extract_list(result):
-                        group_id = str(item.get("group_id", "")).strip()
-                        if not group_id or group_id in merged_groups:
-                            continue
-                        merged_groups[group_id] = self._normalize_group_summary(item)
-                        group_clients[group_id] = client
-                        if self._needs_detail_refresh(item, group_id):
-                            missing_detail_group_ids.add(group_id)
                 except Exception as exc:
-                    logger.warning("Failed to load QQ group list: %s", exc)
+                    formatted = self._format_error(exc)
+                    refresh_errors.append(f"{label}: {formatted}")
+                    logger.warning("Failed to load QQ group list via %s: %s", label, formatted)
+                    continue
+                items = self._extract_list(result)
+                if not items and not (isinstance(result, list) or (isinstance(result, dict) and isinstance(result.get("data"), list))):
+                    refresh_errors.append(f"{label}：接口返回异常")
+                    logger.warning(
+                        "QQ group list via %s returned unexpected result: %s",
+                        label,
+                        repr(result)[:500],
+                    )
+                    continue
+                for item in items:
+                    group_id = str(item.get("group_id", "")).strip()
+                    if not group_id or group_id in merged_groups:
+                        continue
+                    merged_groups[group_id] = self._normalize_group_summary(item)
+                    group_clients[group_id] = client
+                    if self._needs_detail_refresh(item, group_id):
+                        missing_detail_group_ids.add(group_id)
 
             for group_id in self.db.list_group_ids():
                 if group_id not in merged_groups:
@@ -138,11 +157,36 @@ class QQGroupInfoCache:
             if missing_detail_group_ids:
                 await self._hydrate_missing_groups(merged_groups, group_clients, missing_detail_group_ids)
 
+            live_count = sum(1 for group in merged_groups.values() if group.get("source") == "live")
+            if not clients:
+                self._last_refresh_error = "群列表刷新失败：无可用的 aiocqhttp 连接，请检查机器人是否在线"
+            elif live_count == 0 and refresh_errors:
+                detail = "; ".join(refresh_errors)
+                self._last_refresh_error = f"群列表刷新失败：{detail[:500]}"
+            else:
+                self._last_refresh_error = None
+
             groups = list(merged_groups.values())
             self._attach_cached_bot_roles(groups)
             self._group_list_cache = self._sort_groups(groups)
             self._group_clients = group_clients
             self._last_refresh_at = time.time()
+
+    @property
+    def last_refresh_error(self) -> str | None:
+        """最近一次群列表刷新的错误（无错误返回 None），供 Web 面板展示。"""
+        return self._last_refresh_error
+
+    def _describe_client(self, index: int, client: Any) -> str:
+        """给 client 一个可读标识（优先用已缓存的 bot QQ，便于多开时定位）。"""
+        bot_id = self._client_bot_ids.get(id(client))
+        return f"client#{index}(bot {bot_id})" if bot_id else f"client#{index}"
+
+    @staticmethod
+    def _format_error(exc: BaseException) -> str:
+        """异常类型 + 信息双保险：str(exc) 为空时回退到 repr，避免日志只剩一个冒号。"""
+        message = str(exc).strip() or repr(exc)
+        return f"{type(exc).__name__}: {message}"
 
     async def _load_group_detail(self, group_id: str) -> dict[str, Any]:
         group_detail = self._find_group_from_cache(group_id) or self._build_fallback_group(group_id)
@@ -160,16 +204,21 @@ class QQGroupInfoCache:
         group_clients: dict[str, Any],
         group_ids: set[str],
     ) -> None:
-        for group_id in sorted(group_ids):
-            detail, client = await self._fetch_group_detail(
-                group_id,
-                preferred_client=group_clients.get(group_id),
-            )
+        semaphore = asyncio.Semaphore(8)
+
+        async def _load(group_id: str) -> None:
+            async with semaphore:
+                detail, client = await self._fetch_group_detail(
+                    group_id,
+                    preferred_client=group_clients.get(group_id),
+                )
             if not detail:
-                continue
+                return
             merged_groups[group_id].update(detail)
             if client is not None:
                 group_clients[group_id] = client
+
+        await asyncio.gather(*(_load(group_id) for group_id in sorted(group_ids)))
 
     async def _fetch_group_detail(
         self,

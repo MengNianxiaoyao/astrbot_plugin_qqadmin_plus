@@ -1,5 +1,6 @@
 import asyncio
 
+from astrbot.api import logger
 from astrbot.core.message.components import At, Reply
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -22,20 +23,23 @@ class RecallHandle:
         if not chain:
             await event.send(event.plain_result("未获取到可撤回的消息"))
             return
-        first_seg = chain[0]
-        if isinstance(first_seg, Reply):
+        reply_seg = next((seg for seg in chain if isinstance(seg, Reply)), None)
+        if reply_seg:
             try:
-                await client.delete_msg(message_id=int(first_seg.id))
+                await client.delete_msg(message_id=int(reply_seg.id))
             except Exception:
                 await event.send(event.plain_result("我无权撤回这条消息"))
             finally:
                 event.stop_event()
+            return
         elif any(isinstance(seg, At) for seg in chain):
             target_ids = get_ats(event) or [event.get_self_id()]
             target_ids = {str(uid) for uid in target_ids}
 
-            end_arg = event.message_str.split()[-1]
+            parts = event.message_str.split()
+            end_arg = parts[-1] if parts else ""
             count = int(end_arg) if end_arg.isdigit() else 10
+            count = max(1, min(count, 50))
 
             payloads = {
                 "group_id": int(event.get_group_id()),
@@ -43,26 +47,46 @@ class RecallHandle:
                 "count": count,
                 "reverseOrder": True,
             }
-            result: dict = await client.api.call_action("get_group_msg_history", **payloads)
+            try:
+                result = await client.api.call_action("get_group_msg_history", **payloads)
+            except Exception as e:
+                logger.warning(f"获取群聊消息记录失败: {e}")
+                await event.send(event.plain_result("获取群聊消息记录失败"))
+                event.stop_event()
+                return
 
-            messages = list(reversed(result.get("messages", [])))
+            raw_messages = []
+            if isinstance(result, dict):
+                raw_messages = result.get("messages", []) or []
+            messages = [m for m in raw_messages if isinstance(m, dict)]
             delete_count = 0
             sem = asyncio.Semaphore(10)
 
             # 撤回消息
             async def try_delete(message: dict):
                 nonlocal delete_count
-                if str(message["sender"]["user_id"]) not in target_ids:
-                    return
-                async with sem:
-                    try:
-                        await client.delete_msg(message_id=message["message_id"])
-                        delete_count += 1
-                    except Exception:
-                        pass
+                try:
+                    sender = message.get("sender", {}) or {}
+                    if str(sender.get("user_id")) not in target_ids:
+                        return
+                    message_id = message.get("message_id")
+                    if not message_id:
+                        return
+                    async with sem:
+                        try:
+                            await client.delete_msg(message_id=message_id)
+                            delete_count += 1
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
             # 并发撤回
             tasks = [try_delete(msg) for msg in messages]
             await asyncio.gather(*tasks)
 
             await event.send(event.plain_result(f"已从{count}条消息中撤回{delete_count}条"))
+            event.stop_event()
+        else:
+            await event.send(event.plain_result("用法：引用要撤回的消息，或 撤回 @群友 [数量]"))
+            event.stop_event()

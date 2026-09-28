@@ -6,6 +6,7 @@ import zoneinfo
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import anyio
 from aiocqhttp import CQHttp, Event
 from apscheduler.job import Job
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -49,6 +50,12 @@ class CurfewStore:
         except Exception as e:
             logger.error(f"保存宵禁任务数据失败: {e}", exc_info=True)
 
+    async def save_async(self):
+        try:
+            await anyio.to_thread.run_sync(self.save)
+        except Exception as e:
+            logger.error(f"异步保存宵禁任务数据失败: {e}", exc_info=True)
+
 
 class GroupCurfew:
     """单群宵禁任务，维护两个 job（开始/结束）"""
@@ -90,9 +97,7 @@ class GroupCurfew:
             logger.error(f"群 {self.group_id} 宵禁开启失败: {e}", exc_info=True)
             async with self._lock:
                 self.whole_ban_status = False
-            # 异常时移除群
-            if hasattr(self, "manager") and self.manager:
-                await self.manager.remove_group_on_error(self.group_id)
+            # 临时异常不自动移除，保留任务以便下次重试
 
     async def _disable_curfew(self):
         """关闭宵禁"""
@@ -141,12 +146,14 @@ class GroupCurfew:
 
     def stop_curfew_task(self):
         """移除 APScheduler 任务（同步即可）"""
-        if self.start_job:
-            self.start_job.remove()
-            self.start_job = None
-        if self.end_job:
-            self.end_job.remove()
-            self.end_job = None
+        for job in (self.start_job, self.end_job):
+            if job:
+                try:
+                    job.remove()
+                except Exception as e:
+                    logger.debug(f"移除宵禁任务失败(可能已移除): {e}")
+        self.start_job = None
+        self.end_job = None
         logger.info(f"群 {self.group_id} 宵禁任务已移除")
 
 
@@ -161,6 +168,7 @@ class BotCurfewManager:
         self.store.data.setdefault(bot_id, {})
         self.bot_data = self.store.data[bot_id]
         self.tasks: dict[str, GroupCurfew] = {}
+        self._save_lock = asyncio.Lock()
 
     async def restore_from_store(self):
         """恢复群聊禁言任务"""
@@ -178,10 +186,11 @@ class BotCurfewManager:
             except Exception as e:
                 logger.error(f"恢复群 {group_id} 宵禁失败: {e}")
 
-    def _save(self):
-        self.bot_data.clear()
-        self.bot_data.update({gid: {"start_time": cw._start_time_str, "end_time": cw._end_time_str} for gid, cw in self.tasks.items()})
-        self.store.save()
+    async def _save(self):
+        async with self._save_lock:
+            self.bot_data.clear()
+            self.bot_data.update({gid: {"start_time": cw._start_time_str, "end_time": cw._end_time_str} for gid, cw in self.tasks.items()})
+            await self.store.save_async()
 
     async def remove_group_on_error(self, group_id: str):
         """当群无法操作时自动移除"""
@@ -190,7 +199,7 @@ class BotCurfewManager:
             cw.stop_curfew_task()
         if group_id in self.bot_data:
             self.bot_data.pop(group_id)
-        self._save()
+        await self._save()
         logger.info(f"群 {group_id} 因操作失败已从宵禁任务中移除")
 
     async def enable_curfew(self, group_id: str, start_time: str, end_time: str):
@@ -201,7 +210,7 @@ class BotCurfewManager:
 
         await cw.start_curfew_task()
         self.tasks[group_id] = cw
-        self._save()
+        await self._save()
 
     async def disable_curfew(self, group_id: str) -> bool:
         """关闭群聊的宵禁任务"""
@@ -209,7 +218,7 @@ class BotCurfewManager:
         if cw:
             cw.stop_curfew_task()
             self.bot_data.pop(group_id, None)
-            self._save()
+            await self._save()
             return True
         return False
 
@@ -243,8 +252,9 @@ class CurfewHandle:
 
         # client 直接获取 bot_id
         try:
-            login_data = await client.get_login_info()
-            bot_id = str(login_data.get("user_id"))
+            login_data = await client.get_login_info() or {}
+            user_id = login_data.get("user_id")
+            bot_id = str(user_id) if user_id is not None else None
         except Exception:
             pass
 
@@ -277,7 +287,10 @@ class CurfewHandle:
     async def initialize(self):
         tasks = [self._initialize_aiocqhttp_adapter(inst) for inst in self.context.platform_manager.platform_insts if isinstance(inst, AiocqhttpAdapter)]
         if tasks:
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error(f"宵禁初始化子任务异常: {r}")
 
     @staticmethod
     def parse_time(time_str: str) -> tuple[str, int, int] | None:
@@ -338,4 +351,4 @@ class CurfewHandle:
             for cw in list(curfew_mgr.tasks.values()):
                 cw.stop_curfew_task()
             curfew_mgr.tasks.clear()
-        self.store.save()
+        await self.store.save_async()

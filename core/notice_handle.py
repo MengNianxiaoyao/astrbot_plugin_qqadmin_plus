@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import textwrap
+import time
 from datetime import datetime
-from typing import TYPE_CHECKING
 
+import anyio
 from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -12,13 +13,9 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from ..config import PluginConfig
 from ..utils import download_file, extract_image_url
 
-if TYPE_CHECKING:
-    from ..main import QQAdminPlugin
-
 
 class NoticeHandle:
-    def __init__(self, plugin: QQAdminPlugin, config: PluginConfig):
-        self.plugin = plugin
+    def __init__(self, config: PluginConfig):
         self.cfg = config
 
     async def send_group_notice(
@@ -42,23 +39,87 @@ class NoticeHandle:
             if not image_path:
                 return "图片获取失败"
 
-            await event.bot._send_group_notice(
-                group_id=int(event.get_group_id()),
-                content=content,
-                image=str(image_path),
-            )
-        event.stop_event()
+            try:
+                await event.bot.api.call_action(
+                    "send_group_notice",
+                    group_id=int(event.get_group_id()),
+                    content=content,
+                    image=str(image_path),
+                )
+            except AttributeError:
+                await event.bot._send_group_notice(
+                    group_id=int(event.get_group_id()),
+                    content=content,
+                    image=str(image_path),
+                )
+            # 清理 7 天前或超 50 张的旧图
+            try:
+                await self._cleanup_old_images()
+            except Exception:
+                pass
+        else:
+            try:
+                await event.bot.api.call_action(
+                    "send_group_notice",
+                    group_id=int(event.get_group_id()),
+                    content=content,
+                )
+            except AttributeError:
+                await event.bot._send_group_notice(
+                    group_id=int(event.get_group_id()),
+                    content=content,
+                )
         return "群公告已发布"
+
+    async def _cleanup_old_images(self, keep: int = 50, max_age_days: int = 7):
+        def _do():
+            try:
+                d = self.cfg.group_notice_dir
+                if not d.exists():
+                    return
+                now = time.time()
+                files = [(p, p.stat().st_mtime) for p in d.iterdir() if p.is_file()]
+                files.sort(key=lambda x: x[1])
+                cutoff = now - max_age_days * 86400
+                for p, mtime in list(files):
+                    if mtime < cutoff or len(files) > keep:
+                        try:
+                            p.unlink(missing_ok=True)
+                            files.remove((p, mtime))
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"清理群公告图片失败: {e}")
+
+        await anyio.to_thread.run_sync(_do)
 
     async def get_group_notice(self, event: AiocqhttpMessageEvent):
         """查看群公告"""
-        notices = await event.bot._get_group_notice(group_id=int(event.get_group_id()))
+        try:
+            notices = await event.bot.api.call_action("get_group_notice", group_id=int(event.get_group_id()))
+        except AttributeError:
+            try:
+                notices = await event.bot._get_group_notice(group_id=int(event.get_group_id()))
+            except Exception as e:
+                logger.warning(f"获取群公告失败: {e}")
+                return "获取群公告失败"
+
+        if isinstance(notices, dict):
+            notices = notices.get("data", []) or []
+        if not isinstance(notices, list):
+            return "当前群没有群公告"
 
         formatted_messages = []
         for notice in notices:
-            sender_id = notice["sender_id"]
-            publish_time = datetime.fromtimestamp(notice["publish_time"]).strftime("%Y-%m-%d %H:%M:%S")
-            message_text = notice["message"]["text"].replace("&#10;", "\n\n")
+            if not isinstance(notice, dict):
+                continue
+            try:
+                sender_id = notice.get("sender_id", "未知")
+                publish_time = datetime.fromtimestamp(int(notice.get("publish_time", 0))).strftime("%Y-%m-%d %H:%M:%S")
+                message = notice.get("message", {}) or {}
+                message_text = str(message.get("text", "")).replace("&#10;", "\n\n")
+            except (TypeError, ValueError):
+                continue
 
             formatted_message = f"【{publish_time}-{sender_id}】\n\n{textwrap.indent(message_text, '    ')}"
             formatted_messages.append(formatted_message)

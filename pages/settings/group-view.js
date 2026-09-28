@@ -19,17 +19,30 @@ function buildGroupRoleBadge(group) {
   return badge;
 }
 
+function formatMemberText(group) {
+  const member = Number(group?.member_count) || 0;
+  const max = Number(group?.max_member_count) || 0;
+  if (max > 0) {
+    return `${member}/${max} 人`;
+  }
+  if (member > 0) {
+    return `${member} 人`;
+  }
+  return "";
+}
+
 export function renderGroupCards({
   root,
   groups,
   currentGroupId,
   onSelect,
+  emptyText = "当前没有可显示的群。",
 }) {
   root.innerHTML = "";
 
   if (!groups.length) {
     root.classList.add("empty-state");
-    root.textContent = "当前没有可显示的群。";
+    root.textContent = emptyText;
     return;
   }
 
@@ -52,6 +65,7 @@ export function renderGroupCards({
       "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><rect width='96' height='96' rx='24' fill='%23e8c49a'/><text x='48' y='56' text-anchor='middle' font-size='34' fill='%23824f1f' font-family='Arial'>D</text></svg>";
     avatar.alt = `${group.group_name} 群头像`;
     avatar.loading = "lazy";
+    avatar.decoding = "async";
     card.appendChild(avatar);
 
     const main = document.createElement("div");
@@ -80,21 +94,27 @@ export function renderGroupCards({
         <span>新群继承这里的配置</span>
       `;
     } else {
+      const memberText = formatMemberText(group);
       subline.innerHTML = `
         <span class="group-card-id">${group.group_id}</span>
-        <span>${group.member_count || 0} 人</span>
+        ${memberText ? `<span>${memberText}</span>` : ""}
       `;
     }
     main.appendChild(subline);
 
     card.appendChild(main);
 
-    card.addEventListener("click", () => {
-      onSelect?.(group.group_id);
-    });
-
     fragment.appendChild(card);
   });
+
+  // 事件委托：整表共用一个点击监听器，避免逐卡绑定
+  root.onclick = (e) => {
+    const card = e.target instanceof Element ? e.target.closest(".group-card") : null;
+    if (!card || !root.contains(card)) {
+      return;
+    }
+    onSelect?.(card.dataset.groupId);
+  };
 
   root.appendChild(fragment);
 }
@@ -102,4 +122,9 @@ export function renderGroupCards({
 export function renderGroupDetailHeader(els, payload) {
   const info = payload.group_info || {};
   els.currentGroupName.textContent = info.group_name || `群 ${payload.group_id}`;
+  if (els.currentGroupMeta) {
+    const memberText = formatMemberText(info);
+    const groupId = payload.group_id && !payload.is_default_group ? `群号 ${payload.group_id}` : "";
+    els.currentGroupMeta.textContent = [groupId, memberText ? `人数 ${memberText}` : ""].filter(Boolean).join(" · ");
+  }
 }
