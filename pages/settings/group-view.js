@@ -36,12 +36,13 @@ export function renderGroupCards({
   groups,
   currentGroupId,
   onSelect,
+  emptyText = "当前没有可显示的群。",
 }) {
   root.innerHTML = "";
 
   if (!groups.length) {
     root.classList.add("empty-state");
-    root.textContent = "当前没有可显示的群。";
+    root.textContent = emptyText;
     return;
   }
 

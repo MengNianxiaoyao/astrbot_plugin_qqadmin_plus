@@ -93,9 +93,13 @@ function buildField(path, key, schema, value, options = {}) {
         shell.copy.appendChild(hint);
       }
       shell.toggle.disabled = disabled;
-      let collapsed = !options.expandedObjectPaths.has(path);
+      if (!objectCollapsedState.has(path)) {
+        objectCollapsedState.set(path, !options.expandedObjectPaths.has(path));
+      }
+      let collapsed = objectCollapsedState.get(path);
       bindCollapseToggle(shell, () => collapsed, () => {
         collapsed = !collapsed;
+        objectCollapsedState.set(path, collapsed);
       });
       shell.body.appendChild(buildChildGrid(schema, value, path, options));
       if (disabled) {
@@ -248,6 +252,9 @@ function buildField(path, key, schema, value, options = {}) {
 
 // 分组折叠状态（页面内保持，切换群不丢失）
 const collapsedSections = new Set();
+
+// 对象字段折叠状态（页面内保持，重渲染/切换群不丢失；首次取传入的 collapsed/expanded 默认值）
+const objectCollapsedState = new Map();
 
 function buildFieldsGrid(entries, values, normalizedOptions) {
   const grid = document.createElement("div");

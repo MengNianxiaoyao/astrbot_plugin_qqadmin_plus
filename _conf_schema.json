@@ -582,7 +582,7 @@
           "高等级成员",
           "成员"
         ],
-        "default": "高等级成员"
+        "default": "管理员"
       },
       "welcome": {
         "description": "进群欢迎与禁言",

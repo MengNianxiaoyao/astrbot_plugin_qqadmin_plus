@@ -162,7 +162,7 @@ class QQAdminWebController:
         return self._jsonify({"ok": True, "data": await self.service.get_bootstrap_payload()})
 
     async def page_refresh_groups(self):
-        return self._jsonify({"ok": True, "data": await self.service.list_groups(force=True)})
+        return self._jsonify({"ok": True, "data": await self.service.list_groups_with_status(force=True)})
 
     async def page_refresh_group_roles(self):
         payload = await self._request().get_json(force=True, silent=True) or {}

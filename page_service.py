@@ -72,6 +72,7 @@ class QQAdminPageService:
                 "groups": self.get_group_table(),
             },
             "groups": await self.list_groups(),
+            "refresh_error": self.group_cache.last_refresh_error,
         }
 
     def get_default_group_entry(self) -> dict[str, Any]:
@@ -92,6 +93,11 @@ class QQAdminPageService:
     async def list_groups(self, force: bool = False) -> list[dict[str, Any]]:
         groups = await self.group_cache.list_groups(force=force)
         return await self._build_group_entries(groups)
+
+    async def list_groups_with_status(self, force: bool = False) -> dict[str, Any]:
+        """群列表 + 最近一次刷新错误，供面板展示刷新失败原因。"""
+        groups = await self.list_groups(force=force)
+        return {"groups": groups, "refresh_error": self.group_cache.last_refresh_error}
 
     async def list_groups_with_bot_roles(self, force: bool = False) -> list[dict[str, Any]]:
         groups = await self.group_cache.list_groups_with_bot_roles(force_bot_roles=force)

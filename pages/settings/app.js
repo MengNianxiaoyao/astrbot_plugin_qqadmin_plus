@@ -19,6 +19,7 @@ let api = null;
 let bootstrapData = null;
 let currentGroup = null;
 let allGroups = [];
+let groupListError = null;
 let detachContextHandler = null;
 let themeController = null;
 let groupRoleSyncToken = 0;
@@ -156,6 +157,7 @@ function filterAndRenderGroups() {
     root: els.groupList,
     groups,
     currentGroupId: currentGroup?.group_id || "",
+    emptyText: groupListError && !groups.length ? groupListError : "当前没有可显示的群。",
     onSelect: async (groupId) => {
       try {
         // 全局视图下选群视为回到群配置，避免群名覆盖全局标题
@@ -227,7 +229,11 @@ function renderGroupForm(groupPayload) {
 async function loadBootstrapData() {
   const data = await api.safeGet("settings/bootstrap");
   bootstrapData = data;
+  groupListError = data.refresh_error || null;
   applyGroupList(data.groups || []);
+  if (groupListError) {
+    showToast(groupListError, "error");
+  }
 }
 
 async function syncGroupRoles(requestToken, options = {}) {
@@ -248,8 +254,13 @@ async function syncGroupRoles(requestToken, options = {}) {
 }
 
 async function refreshGroups() {
-  const groups = await api.safePost("settings/groups/refresh", {});
-  applyGroupList(groups || []);
+  const result = await api.safePost("settings/groups/refresh", {});
+  groupListError = result.refresh_error || null;
+  applyGroupList(result.groups || []);
+  if (groupListError) {
+    showToast(groupListError, "error");
+  }
+  return groupListError;
 }
 
 async function loadGroupConfig(groupId, force = false) {
@@ -808,13 +819,15 @@ function bindEvents() {
 
   els.refreshGroupsBtn.addEventListener("click", async () => {
     try {
-      await refreshGroups();
+      const refreshError = await refreshGroups();
       scheduleGroupRoleSync({ force: true });
       // 全局视图下不重载群配置，避免群名覆盖全局标题
       if (currentView === "group" && currentGroup?.group_id) {
         await loadGroupConfig(currentGroup.group_id);
       }
-      showToast("群列表已同步");
+      if (!refreshError) {
+        showToast("群列表已同步");
+      }
     } catch (error) {
       showToast(error.message, "error");
     }
