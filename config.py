@@ -118,7 +118,7 @@ class PluginConfig(ConfigNode):
     perms: dict
 
     _db_version = 3
-    _plugin_name: str = "astrbot_plugin_qqadmin"
+    _plugin_name: str = "astrbot_plugin_qqadmin_plus"
 
     def __init__(self, cfg: AstrBotConfig, context: Context):
         super().__init__(cfg)

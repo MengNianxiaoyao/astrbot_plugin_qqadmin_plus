@@ -19,7 +19,7 @@ from .data import QQAdminDB, QQAdminGlobalList
 from .group_info_cache import QQGroupInfoCache
 from .page_service import QQAdminPageService
 
-PLUGIN_NAME = "astrbot_plugin_qqadmin"
+PLUGIN_NAME = "astrbot_plugin_qqadmin_plus"
 
 
 class QQAdminWebController:
@@ -39,7 +39,11 @@ class QQAdminWebController:
 
     def register_routes(self) -> None:
         routes = [
-            ("/ping", self.page_ping, ["GET"], "Page ping"),
+            (   "/ping",
+                self.page_ping,
+                ["GET"],
+                "Page ping",
+            ),
             (
                 "/settings/bootstrap",
                 self.page_bootstrap,
@@ -58,7 +62,11 @@ class QQAdminWebController:
                 ["POST"],
                 "Load bot roles for QQ groups",
             ),
-            ("/settings/group", self.page_get_group, ["GET"], "Load one group config"),
+            (   "/settings/group",
+                self.page_get_group,
+                ["GET"],
+                "Load one group config",
+            ),
             (
                 "/settings/group",
                 self.page_update_group,
