@@ -39,7 +39,8 @@ class QQAdminWebController:
 
     def register_routes(self) -> None:
         routes = [
-            (   "/ping",
+            (
+                "/ping",
                 self.page_ping,
                 ["GET"],
                 "Page ping",
@@ -62,7 +63,8 @@ class QQAdminWebController:
                 ["POST"],
                 "Load bot roles for QQ groups",
             ),
-            (   "/settings/group",
+            (
+                "/settings/group",
                 self.page_get_group,
                 ["GET"],
                 "Load one group config",
