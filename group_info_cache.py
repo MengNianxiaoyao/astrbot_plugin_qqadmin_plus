@@ -132,10 +132,7 @@ class QQGroupInfoCache:
                     logger.warning("Failed to load QQ group list via %s: %s", label, formatted)
                     continue
                 items = self._extract_list(result)
-                if not items and not (
-                    isinstance(result, list)
-                    or (isinstance(result, dict) and isinstance(result.get("data"), list))
-                ):
+                if not items and not (isinstance(result, list) or (isinstance(result, dict) and isinstance(result.get("data"), list))):
                     refresh_errors.append(f"{label}：接口返回异常")
                     logger.warning(
                         "QQ group list via %s returned unexpected result: %s",
