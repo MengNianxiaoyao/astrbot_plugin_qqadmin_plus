@@ -126,9 +126,7 @@ class QQGroupInfoCache:
                 logger.warning("No aiocqhttp client available, skip QQ group list refresh and use cached groups only")
 
             # 多 client 并行拉取，总耗时取最慢者（仍受单次超时封顶），而非顺序累加
-            loaded = await asyncio.gather(
-                *(self._fetch_group_list(index, client) for index, client in enumerate(clients))
-            )
+            loaded = await asyncio.gather(*(self._fetch_group_list(index, client) for index, client in enumerate(clients)))
             for _index, client, items, error in loaded:
                 if error is not None:
                     refresh_errors.append(error)
@@ -262,10 +260,7 @@ class QQGroupInfoCache:
         preferred_client: Any | None = None,
     ) -> tuple[dict[str, Any] | None, Any | None]:
         clients = self._build_client_priority_list(preferred_client)
-        attempts = [
-            (index, client, self._call_action(client, "get_group_info", group_id=int(group_id)))
-            for index, client in enumerate(clients)
-        ]
+        attempts = [(index, client, self._call_action(client, "get_group_info", group_id=int(group_id))) for index, client in enumerate(clients)]
         result, client, errors = await self._race_clients(attempts)
         if result is not None and client is not None:
             info = self._extract_object(result)
