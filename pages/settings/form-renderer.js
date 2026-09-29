@@ -133,7 +133,10 @@ function buildField(path, key, schema, value, options = {}) {
     return wrapper;
   }
 
-  const field = document.createElement("label");
+  // 复选框组含多个可点击控件且内层已是 label，外层必须用 div：
+  // label 嵌套 label 是非法 HTML，点击空白/文字会误触发第一个复选框
+  const useDivWrapper = type === "list" && (schema.options?.length || 0) > 0;
+  const field = document.createElement(useDivWrapper ? "div" : "label");
   field.className = "field";
   if (type === "bool") {
     field.classList.add("checkbox-field");
@@ -199,15 +202,17 @@ function buildField(path, key, schema, value, options = {}) {
     control.appendChild(input);
   } else if (type === "list") {
     if (schema.options?.length) {
-      // 带固定选项的列表渲染为复选框组
+      // 带固定选项的列表渲染为复选框组；展示文本优先取 options 对象自带的 label，
+      // 其次取与 options 等长的 labels 数组（AstrBot 官方机制），最后回退为值本身
       const selected = new Set(
         (Array.isArray(value) ? value : []).map((item) => String(item))
       );
+      const labels = Array.isArray(schema.labels) ? schema.labels : [];
       const group = document.createElement("div");
       group.className = "check-group";
-      schema.options.forEach((option) => {
+      schema.options.forEach((option, optionIndex) => {
         const optionValue = String(option?.value ?? option);
-        const optionLabel = option?.label ?? option?.description ?? optionValue;
+        const optionLabel = option?.label ?? option?.description ?? labels[optionIndex] ?? optionValue;
         const label = document.createElement("label");
         label.className = "check-item";
         const box = document.createElement("input");

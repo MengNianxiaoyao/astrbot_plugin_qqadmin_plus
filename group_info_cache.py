@@ -20,6 +20,9 @@ BOT_ROLE_PRIORITY = {
     "unknown": 2,
 }
 
+# OneBot 单次调用超时封顶（秒）：防实现端无响应时无限挂起，与跨群探测的超时策略一致
+API_TIMEOUT_SECONDS = 10.0
+
 
 class QQGroupInfoCache:
     def __init__(
@@ -122,23 +125,13 @@ class QQGroupInfoCache:
             if not clients:
                 logger.warning("No aiocqhttp client available, skip QQ group list refresh and use cached groups only")
 
-            for index, client in enumerate(clients):
-                label = self._describe_client(index, client)
-                try:
-                    result = await client.call_action("get_group_list")
-                except Exception as exc:
-                    formatted = self._format_error(exc)
-                    refresh_errors.append(f"{label}: {formatted}")
-                    logger.warning("Failed to load QQ group list via %s: %s", label, formatted)
-                    continue
-                items = self._extract_list(result)
-                if not items and not (isinstance(result, list) or (isinstance(result, dict) and isinstance(result.get("data"), list))):
-                    refresh_errors.append(f"{label}：接口返回异常")
-                    logger.warning(
-                        "QQ group list via %s returned unexpected result: %s",
-                        label,
-                        repr(result)[:500],
-                    )
+            # 多 client 并行拉取，总耗时取最慢者（仍受单次超时封顶），而非顺序累加
+            loaded = await asyncio.gather(
+                *(self._fetch_group_list(index, client) for index, client in enumerate(clients))
+            )
+            for _index, client, items, error in loaded:
+                if error is not None:
+                    refresh_errors.append(error)
                     continue
                 for item in items:
                     group_id = str(item.get("group_id", "")).strip()
@@ -177,6 +170,11 @@ class QQGroupInfoCache:
         """最近一次群列表刷新的错误（无错误返回 None），供 Web 面板展示。"""
         return self._last_refresh_error
 
+    @staticmethod
+    async def _call_action(client: Any, action: str, **kwargs: Any) -> Any:
+        """带超时封顶的 OneBot 调用，超时抛 TimeoutError 由各调用处按失败处理。"""
+        return await asyncio.wait_for(client.call_action(action, **kwargs), timeout=API_TIMEOUT_SECONDS)
+
     def _describe_client(self, index: int, client: Any) -> str:
         """给 client 一个可读标识（优先用已缓存的 bot QQ，便于多开时定位）。"""
         bot_id = self._client_bot_ids.get(id(client))
@@ -187,6 +185,44 @@ class QQGroupInfoCache:
         """异常类型 + 信息双保险：str(exc) 为空时回退到 repr，避免日志只剩一个冒号。"""
         message = str(exc).strip() or repr(exc)
         return f"{type(exc).__name__}: {message}"
+
+    async def _fetch_group_list(self, index: int, client: Any) -> tuple[int, Any, list[dict[str, Any]], str | None]:
+        """单个 client 拉取群列表，返回 (序号, client, 群条目, 错误信息)。"""
+        label = self._describe_client(index, client)
+        try:
+            result = await self._call_action(client, "get_group_list")
+        except Exception as exc:
+            formatted = self._format_error(exc)
+            logger.warning("Failed to load QQ group list via %s: %s", label, formatted)
+            return index, client, [], f"{label}: {formatted}"
+        items = self._extract_list(result)
+        if not items and not (isinstance(result, list) or (isinstance(result, dict) and isinstance(result.get("data"), list))):
+            logger.warning("QQ group list via %s returned unexpected result: %s", label, repr(result)[:500])
+            return index, client, [], f"{label}：接口返回异常"
+        return index, client, items, None
+
+    async def _race_clients(self, attempts: list[tuple[int, Any, Any]]) -> tuple[Any | None, Any | None, list[str]]:
+        """多 client 并行竞速，返回 (首个成功结果, 对应 client, 失败记录)；全部失败返回 (None, None, errors)。"""
+        if not attempts:
+            return None, None, []
+        tasks = {asyncio.ensure_future(coro): (index, client) for index, client, coro in attempts}
+        errors: list[str] = []
+        pending = set(tasks)
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    index, client = tasks[task]
+                    try:
+                        return task.result(), client, errors
+                    except Exception as exc:
+                        errors.append(f"{self._describe_client(index, client)}: {self._format_error(exc)}")
+        finally:
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        return None, None, errors
 
     async def _load_group_detail(self, group_id: str) -> dict[str, Any]:
         group_detail = self._find_group_from_cache(group_id) or self._build_fallback_group(group_id)
@@ -225,17 +261,20 @@ class QQGroupInfoCache:
         group_id: str,
         preferred_client: Any | None = None,
     ) -> tuple[dict[str, Any] | None, Any | None]:
-        for client in self._build_client_priority_list(preferred_client):
-            try:
-                result = await client.call_action("get_group_info", group_id=int(group_id))
-                info = self._extract_object(result)
-                if info:
-                    detail = self._normalize_group_summary(info)
-                    detail["source"] = "live"
-                    return detail, client
-            except Exception as exc:
-                logger.debug("Failed to fetch QQ group detail for %s: %s", group_id, exc)
-
+        clients = self._build_client_priority_list(preferred_client)
+        attempts = [
+            (index, client, self._call_action(client, "get_group_info", group_id=int(group_id)))
+            for index, client in enumerate(clients)
+        ]
+        result, client, errors = await self._race_clients(attempts)
+        if result is not None and client is not None:
+            info = self._extract_object(result)
+            if info:
+                detail = self._normalize_group_summary(info)
+                detail["source"] = "live"
+                return detail, client
+        if errors:
+            logger.debug("Failed to fetch QQ group detail for %s: %s", group_id, "; ".join(errors))
         return None, None
 
     async def _hydrate_bot_roles(self, force: bool = False) -> None:
@@ -272,25 +311,33 @@ class QQGroupInfoCache:
         group_id: str,
         preferred_client: Any | None = None,
     ) -> tuple[str, Any | None]:
-        for client in self._build_client_priority_list(preferred_client):
-            bot_id = await self._get_client_bot_id(client)
-            if not bot_id or not bot_id.isdigit():
-                continue
-
-            try:
-                result = await client.call_action(
+        clients = self._build_client_priority_list(preferred_client)
+        if not clients:
+            return "unknown", None
+        # bot QQ 并行解析（命中缓存时无额外开销），再对有效账号竞速查询身份
+        bot_ids = await asyncio.gather(*(self._get_client_bot_id(client) for client in clients))
+        attempts = [
+            (
+                index,
+                client,
+                self._call_action(
+                    client,
                     "get_group_member_info",
                     group_id=int(group_id),
                     user_id=int(bot_id),
                     no_cache=True,
-                )
-                info = self._extract_object(result)
-                if not info:
-                    continue
+                ),
+            )
+            for index, (client, bot_id) in enumerate(zip(clients, bot_ids))
+            if bot_id and bot_id.isdigit()
+        ]
+        result, client, errors = await self._race_clients(attempts)
+        if result is not None and client is not None:
+            info = self._extract_object(result)
+            if info:
                 return self._normalize_bot_role(info.get("role")), client
-            except Exception as exc:
-                logger.debug("Failed to fetch bot role for %s: %s", group_id, exc)
-
+        if errors:
+            logger.debug("Failed to fetch bot role for %s: %s", group_id, "; ".join(errors))
         return "unknown", None
 
     async def _get_client_bot_id(self, client: Any) -> str:
@@ -301,12 +348,12 @@ class QQGroupInfoCache:
 
         bot_id = ""
         try:
-            result = await client.call_action("get_login_info")
+            result = await self._call_action(client, "get_login_info")
             info = self._extract_object(result)
             bot_id = str(info.get("user_id", "")).strip()
         except Exception:
             try:
-                info = await client.get_login_info() or {}
+                info = await asyncio.wait_for(client.get_login_info(), timeout=API_TIMEOUT_SECONDS) or {}
                 bot_id = str(info.get("user_id", "")).strip()
             except Exception as exc:
                 logger.debug("Failed to fetch bot self id: %s", exc)
