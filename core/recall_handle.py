@@ -37,7 +37,9 @@ class RecallHandle:
             target_ids = {str(uid) for uid in target_ids}
 
             parts = event.message_str.split()
-            end_arg = parts[-1] if parts else ""
+            # 排除 @ 目标自身的 QQ 号 token，避免“撤回 @12345”把尾号误当成数量
+            count_parts = [p for p in parts if p not in target_ids]
+            end_arg = count_parts[-1] if count_parts else ""
             count = int(end_arg) if end_arg.isdigit() else 10
             count = max(1, min(count, 50))
 

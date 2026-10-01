@@ -181,12 +181,14 @@ def perm_required(
     bot_perm: PermLevel = PermLevel.ADMIN,
     perm_key: str | None = None,
     check_at: bool = True,
+    allow_private: bool = False,
 ):
     """
     权限检查装饰器。
     :param perm_key: 可选。用户执行命令所需的最低权限键名，默认使用被装饰函数的函数名。
     :param bot_perm: Bot 执行此命令所需的最低权限等级。
     :param check_at: 是否检查“是否有权对被@者实施操作”。
+    :param allow_private: 超管是否可在私聊中使用该命令；默认 False，私聊一律拒绝。
     """
 
     def decorator(
@@ -206,20 +208,28 @@ def perm_required(
             if event.platform_meta.name != "aiocqhttp":
                 return
 
-            # 私聊处理（仅 bot 管理员能收到通知，直接放行）
+            # 权限管理未初始化（私聊/群聊共用一次判断）
+            if not perm_manager._initialized or perm_manager.cfg is None:
+                logger.error(f"PermissionManager 未初始化（尝试访问权限项：{actual_perm_key}）")
+                yield event.plain_result("内部错误：权限系统未正确加载")
+                event.stop_event()
+                return
+
+            # 私聊处理：超管 + 命令显式放行才可执行，其余拒绝
             if event.is_private_chat():
+                if str(event.get_sender_id()) not in (perm_manager.cfg.admins_id or []):
+                    yield event.plain_result("该命令仅支持在群聊中使用")
+                    event.stop_event()
+                    return
+                if not allow_private:
+                    yield event.plain_result("该命令不支持私聊使用，请在群聊中使用")
+                    event.stop_event()
+                    return
                 if inspect.isasyncgenfunction(func):
                     async for item in func(plugin_instance, event, *args, **kwargs):
                         yield item
                 else:
                     await cast(Awaitable[Any], func(plugin_instance, event, *args, **kwargs))
-                return
-
-            # 权限管理未初始化
-            if not perm_manager._initialized:
-                logger.error(f"PermissionManager 未初始化（尝试访问权限项：{perm_key}）")
-                yield event.plain_result("内部错误：权限系统未正确加载")
-                event.stop_event()
                 return
 
             # 判断权限

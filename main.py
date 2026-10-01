@@ -67,35 +67,39 @@ class QQAdminPlugin(Star):
             asyncio.create_task(self.curfew.initialize())
 
     @filter.command("群管配置", alias={"群管设置"})
-    @perm_required(PermLevel.MEMBER, check_at=False)
+    @perm_required(PermLevel.MEMBER, check_at=False, allow_private=True)
     async def set_config(self, event: AiocqhttpMessageEvent):
         """群管配置 <群号 | 留空> <配置串>"""
         raw: str = event.message_str.partition(" ")[2].strip()
+        # 先解析目标群，跨群门禁统一提前：非超管只能操作本群
         if not raw:
-            gid = event.get_group_id()
+            gid, arg = event.get_group_id(), None
+        elif m := re.match(r"(\d+)\s+(.+)", raw):
+            gid, arg = str(m.group(1)), m.group(2)
+        else:
+            gid, arg = event.get_group_id(), raw
+        if gid != event.get_group_id() and not event.is_admin():
+            yield event.plain_result("仅超管可查看/修改其他群的群管配置")
+            return
+        if arg is None:
             config_str = await self.db.export_cn_lines(gid)
             yield event.plain_result(f"【群管配置】\n{config_str}")
             return
-        m = re.match(r"(\d+)\s+(.+)", raw)
-        if m:
-            gid = str(m.group(1))
-            arg = m.group(2)
-        else:
-            gid = event.get_group_id()
-            arg = raw
         await self.db.import_cn_lines(gid, arg)
         config_str = await self.db.export_cn_lines(gid)
         yield event.plain_result(f"【群管配置】更新:\n{config_str}")
 
     @filter.command("群管重置")
-    @perm_required(PermLevel.MEMBER, check_at=False)
+    @perm_required(PermLevel.MEMBER, check_at=False, allow_private=True)
     async def reset_config(self, event: AiocqhttpMessageEvent, group_id: str | int | None = None):
         """群管重置 <群号 | all>"""
         gid = group_id or event.get_group_id()
+        # 门禁统一提前：all 或他群一律要求超管（"all"恒不等于数字群号，天然落入跨群分支）
+        if str(gid) != event.get_group_id() and not event.is_admin():
+            reason = "所有群" if gid == "all" else "其他群"
+            yield event.plain_result(f"仅超管可重置{reason}的群管配置")
+            return
         if gid == "all":
-            if not event.is_admin():
-                yield event.plain_result("仅超管可重置所有群的群管配置")
-                return
             await self.db.reset_to_default()
             yield event.plain_result("已重置所有群的群管配置")
         else:
@@ -280,6 +284,12 @@ class QQAdminPlugin(Star):
         """反对执行当前禁言投票"""
         await self.banpro.vote_mute(event, agree=False)
 
+    @filter.command("取消投票")
+    @perm_required(PermLevel.ADMIN, perm_key="vote")
+    async def cancel_vote_mute(self, event: AiocqhttpMessageEvent):
+        """取消当前群正在进行的禁言投票"""
+        await self.banpro.cancel_vote_mute(event)
+
     @filter.command("开启宵禁")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     @perm_required(PermLevel.ADMIN, perm_key="curfew")
@@ -362,13 +372,13 @@ class QQAdminPlugin(Star):
         await self.join.handle_block_ids(event)
 
     @filter.command("批准", alias={"同意进群"})
-    @perm_required(PermLevel.ADMIN, perm_key="approve")
+    @perm_required(PermLevel.ADMIN, perm_key="approve", allow_private=True)
     async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         "批准进群申请"
         await self.join.agree_add_group(event, extra)
 
     @filter.command("驳回", alias={"拒绝进群", "不批准"})
-    @perm_required(PermLevel.ADMIN, perm_key="approve")
+    @perm_required(PermLevel.ADMIN, perm_key="approve", allow_private=True)
     async def refuse_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         "驳回进群申请"
         await self.join.refuse_add_group(event, extra)

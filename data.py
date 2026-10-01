@@ -401,7 +401,7 @@ class QQAdminDB:
 
             # bool 必须优先且独占分支，避免 bool 误入 int 分支
             if isinstance(old_val, bool):
-                parsed = parse_bool(raw_v)
+                parsed = parse_bool(raw_v, default=None)
                 if parsed is not None:
                     data[eng_key] = parsed
                 # 解析失败则保留原值，避免误写

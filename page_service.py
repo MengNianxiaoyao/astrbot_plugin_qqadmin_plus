@@ -237,7 +237,10 @@ class QQAdminPageService:
         return {name: self.global_list.get(name) for name in ("allow", "block")}
 
     async def update_global_list(self, list_type: str, items: list[str]) -> list[str]:
-        return self.global_list.set(list_type, items)
+        if not isinstance(items, list):
+            raise ValueError("items must be a list")
+        cleaned = [str(item).strip() for item in items if str(item).strip().isdigit()]
+        return self.global_list.set(list_type, cleaned)
 
     async def get_global_ban_words(self) -> dict[str, list[str]]:
         return {
@@ -369,7 +372,13 @@ class QQAdminPageService:
             return parsed
 
         if field_type == "int":
-            parsed = int(value)
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                try:
+                    parsed = int(current)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    parsed = int(schema.get("default", 0))
             slider = schema.get("slider", {})
             minimum = slider.get("min")
             maximum = slider.get("max")

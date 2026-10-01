@@ -235,12 +235,16 @@ class BanproHandle:
                 except Exception:
                     logger.error(f"bot在群{group_id}权限不足，禁言失败")
                 timestamps.clear()
-        # 惰性清理：长时间未刷屏的用户释放内存
-        if len(timestamps) == 1 and (now - timestamps[0] > max(ban_time, 3600)):
+        # 惰性清理：长时间未发言的用户释放内存（覆盖空 deque 与未达阈值的残留）
+        # 禁言抑制期内的 last_banned_time 予以保留，避免重复禁言
+        idle_limit = max(ban_time, 3600)
+        if not timestamps or (now - timestamps[-1] > idle_limit):
             self.msg_timestamps[group_id].pop(sender_id, None)
-            self.last_banned_time[group_id].pop(sender_id, None)
+            if now - self.last_banned_time[group_id].get(sender_id, 0) > idle_limit:
+                self.last_banned_time[group_id].pop(sender_id, None)
             if not self.msg_timestamps[group_id]:
                 self.msg_timestamps.pop(group_id, None)
+            if not self.last_banned_time[group_id]:
                 self.last_banned_time.pop(group_id, None)
 
     async def start_vote_mute(self, event, ban_time: int | None = None):
@@ -254,14 +258,17 @@ class BanproHandle:
         group_id = event.get_group_id()
         group_config = self.db.get_group_snapshot(group_id)
         ban_time = self.cfg.get_ban_time_with_range(group_config.get("random_ban_time"), ban_time)
+        # 结算不依赖发起时的 event 会话：预捕获 client 与群号，TTL 后直发群消息
+        bot_client = event.bot
+        gid_int = int(group_id)
 
         if group_id in self.vote_cache:
             record = self.vote_cache[group_id]
             if record.get("target") == target_id:
-                await event.send(event.plain_result("已存在对该用户的禁言投票"))
+                await event.send(event.plain_result("已存在对该用户的禁言投票，可发送「取消投票」结束当前投票"))
             else:
                 nickname0 = await get_nickname(event, record["target"])
-                await event.send(event.plain_result(f"群内已有对 {nickname0} 正在进行的禁言投票"))
+                await event.send(event.plain_result(f"群内已有对 {nickname0} 正在进行的禁言投票，可发送「取消投票」结束当前投票"))
             return
 
         vote_ban = group_config.get("vote_ban", {})
@@ -286,29 +293,52 @@ class BanproHandle:
             await asyncio.sleep(ttl)
             current = self.vote_cache.get(group_id)
             if current is not record:
-                return  # 已被提前结算
+                return  # 已被提前结算或取消
             votes = list(record["votes"].values())
             agree_count = sum(votes)
             disagree_count = len(votes) - agree_count
-            nickname2 = await get_nickname(event, record["target"])
+            try:
+                nickname2 = await get_nickname(event, record["target"])
+            except Exception:
+                nickname2 = str(record["target"])
 
             # 到期按多数票决定（平票视为否决）
-            if agree_count > disagree_count:
-                try:
-                    await event.bot.set_group_ban(
-                        group_id=int(group_id),
-                        user_id=int(record["target"]),
-                        duration=record["ban_time"],
-                    )
-                    await event.send(event.plain_result(f"投票时间到！已禁言{nickname2}"))
-                except Exception:
-                    logger.error(f"bot在群{group_id}权限不足，禁言失败")
-            else:
-                await event.send(event.plain_result(f"投票时间到！禁言被否决，{nickname2}安全了"))
-            # 清理投票记录
-            self.vote_cache.pop(group_id, None)
+            try:
+                if agree_count > disagree_count:
+                    try:
+                        await bot_client.set_group_ban(
+                            group_id=gid_int,
+                            user_id=int(record["target"]),
+                            duration=record["ban_time"],
+                        )
+                    except Exception:
+                        logger.error(f"bot在群{group_id}权限不足，禁言失败")
+                        await bot_client.send_group_msg(group_id=gid_int, message=f"投票通过，但禁言{nickname2}失败（权限不足）")
+                    else:
+                        await bot_client.send_group_msg(group_id=gid_int, message=f"投票时间到！已禁言{nickname2}")
+                else:
+                    await bot_client.send_group_msg(group_id=gid_int, message=f"投票时间到！禁言被否决，{nickname2}安全了")
+            except Exception as e:
+                logger.warning(f"群{group_id}投票结算通知发送失败: {e}")
+            finally:
+                # 仅清理自己那条记录，避免误清后来的新投票
+                if self.vote_cache.get(group_id) is record:
+                    self.vote_cache.pop(group_id, None)
 
         asyncio.create_task(settle_vote())
+
+    async def cancel_vote_mute(self, event: AiocqhttpMessageEvent):
+        """取消当前群正在进行的禁言投票（权限由装饰器校验）；结算任务醒来后见记录已消失会自动退出"""
+        group_id = event.get_group_id()
+        record = self.vote_cache.pop(group_id, None)
+        if not record:
+            await event.send(event.plain_result("当前没有进行中的禁言投票"))
+            return
+        try:
+            nickname = await get_nickname(event, record["target"])
+        except Exception:
+            nickname = str(record["target"])
+        await event.send(event.plain_result(f"已取消对 {nickname} 的禁言投票"))
 
     async def vote_mute(self, event: AiocqhttpMessageEvent, agree: bool):
         """

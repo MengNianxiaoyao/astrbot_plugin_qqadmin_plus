@@ -182,6 +182,7 @@ class MemberHandle:
                 kick_semaphore = asyncio.Semaphore(KICK_CONCURRENCY)
 
                 async def _kick_one(clear_id):
+                    target_name = str(clear_id)
                     try:
                         async with kick_semaphore:
                             target_name = await get_nickname(event, user_id=clear_id)
