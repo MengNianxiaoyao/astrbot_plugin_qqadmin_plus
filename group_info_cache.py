@@ -141,9 +141,7 @@ class QQGroupInfoCache:
 
             if with_details:
                 # 手动同步要求数据最新：列表接口的人数可能是缓存值，用实时详情全量校准
-                missing_detail_group_ids.update(
-                    group_id for group_id, group in merged_groups.items() if group.get("source") == "live"
-                )
+                missing_detail_group_ids.update(group_id for group_id, group in merged_groups.items() if group.get("source") == "live")
 
             if missing_detail_group_ids:
                 await self._hydrate_missing_groups(merged_groups, group_clients, missing_detail_group_ids)
@@ -251,11 +249,7 @@ class QQGroupInfoCache:
             for group_id, client in group_clients.items():
                 if client is not None:
                     self._group_clients[group_id] = client
-            failed = [
-                {"group_id": group_id, "group_name": merged_groups[group_id].get("group_name") or group_id}
-                for group_id in failed_ids
-                if group_id in merged_groups
-            ]
+            failed = [{"group_id": group_id, "group_name": merged_groups[group_id].get("group_name") or group_id} for group_id in failed_ids if group_id in merged_groups]
             return list(merged_groups.values()), failed
 
     async def _hydrate_missing_groups(
@@ -319,10 +313,7 @@ class QQGroupInfoCache:
         preferred_client: Any | None = None,
     ) -> tuple[dict[str, Any] | None, Any | None]:
         clients = self._build_client_priority_list(preferred_client)
-        attempts = [
-            (index, client, self._call_action(client, "get_group_info", group_id=int(group_id)))
-            for index, client in enumerate(clients)
-        ]
+        attempts = [(index, client, self._call_action(client, "get_group_info", group_id=int(group_id))) for index, client in enumerate(clients)]
         return await self._fetch_first_valid(
             group_id,
             "fetch QQ group detail",
@@ -589,9 +580,7 @@ class QQGroupInfoCache:
     @classmethod
     def _needs_detail_refresh(cls, raw_group: dict[str, Any], group_id: str) -> bool:
         # 真实群至少有机器人在内，人数全 0 即视为缺数，一并补详情自愈
-        missing_counts = not cls._safe_int(raw_group.get("member_count"), 0) and not cls._safe_int(
-            raw_group.get("max_member_count"), 0
-        )
+        missing_counts = not cls._safe_int(raw_group.get("member_count"), 0) and not cls._safe_int(raw_group.get("max_member_count"), 0)
         return not str(raw_group.get("group_name", "")).strip() or not group_id or missing_counts
 
     @classmethod
