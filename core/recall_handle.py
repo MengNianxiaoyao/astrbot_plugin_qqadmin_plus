@@ -6,16 +6,10 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
-from ..config import PluginConfig
-from ..data import QQAdminDB
 from ..utils import get_ats
 
 
 class RecallHandle:
-    def __init__(self, config: PluginConfig, db: QQAdminDB):
-        self.cfg = config
-        self.db = db
-
     async def delete_msg(self, event: AiocqhttpMessageEvent):
         """(引用消息)撤回 | 撤回 @某人(默认bot) 数量(默认10)"""
         client = event.bot

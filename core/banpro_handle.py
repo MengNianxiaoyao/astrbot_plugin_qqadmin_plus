@@ -13,7 +13,9 @@ from ..data import QQAdminDB
 from ..utils import get_ats, get_nickname, parse_bool
 
 
-class BanproHandle:
+class LexiconStore:
+    """词表模块：内置/全局禁词文件 IO、违禁词配置命令与命中执法。"""
+
     def __init__(self, config: PluginConfig, db: QQAdminDB):
         self.cfg = config
         self.db = db
@@ -21,11 +23,6 @@ class BanproHandle:
         self.builtin_ban_version = str(self.builtin_ban_data.get("lastUpdateDate", "未知"))
         self.builtin_ban_words = self._clean_words(self.builtin_ban_data.get("words", []))
         self.global_ban_words = self._load_global_ban_words()
-        # 不用 maxlen 固定，动态读取 cfg.spamming_count，便于热更新与手动裁剪
-        self.msg_timestamps: dict[str, dict[str, deque[float]]] = defaultdict(lambda: defaultdict(deque))
-        self.last_banned_time: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        # 记录投票 {group_id: {"target": target_id, "votes": {user_id: bool}, "expire": timestamp, "threshold": threshold,}}
-        self.vote_cache: dict[str, dict] = {}
 
     @staticmethod
     def _clean_words(words) -> list[str]:
@@ -67,6 +64,21 @@ class BanproHandle:
 
     def restore_builtin_ban_words(self) -> list[str]:
         return self.set_global_ban_words(self.builtin_ban_words)
+
+    @staticmethod
+    def find_hit(message: str, ban_words: list[str], gid: str) -> str | None:
+        """纯匹配：返回命中的第一条禁词；忽略空词与单字词（后者记 warning）。"""
+        msg = message.lower()
+        for word in ban_words:
+            w = str(word).strip()
+            if not w:
+                continue
+            if len(w) == 1:
+                logger.warning(f"跳过单字禁词以避免过度匹配: {w!r} (群{gid})")
+                continue
+            if w.lower() in msg:
+                return w
+        return None
 
     async def handle_word_ban_time(self, event: AiocqhttpMessageEvent, time: int | None):
         """设置禁词禁言时长"""
@@ -152,37 +164,40 @@ class BanproHandle:
                 return
 
     async def check_ban_words(self, event: AiocqhttpMessageEvent, ban_words: list[str]) -> bool:
-        """检测违禁词并撤回消息；忽略空词与单字词以避免过度匹配"""
+        """检测违禁词并撤回消息、禁言发送者；命中返回 True。"""
         gid = event.get_group_id()
-        msg = event.message_str.lower()
-        for word in ban_words:
-            w = str(word).strip()
-            if not w:
-                continue
-            if len(w) == 1:
-                logger.warning(f"跳过单字禁词以避免过度匹配: {w!r} (群{gid})")
-                continue
-            if w.lower() in msg:
-                # 撤回消息
-                try:
-                    message_id = event.message_obj.message_id
-                    await event.bot.delete_msg(message_id=int(message_id))
-                except Exception:
-                    pass
-                # 禁言发送者
-                ban_time = await self.db.get(gid, "word_ban_time", 0)
-                if ban_time > 0:
-                    try:
-                        await event.bot.set_group_ban(
-                            group_id=int(event.get_group_id()),
-                            user_id=int(event.get_sender_id()),
-                            duration=ban_time,
-                        )
-                    except Exception:
-                        logger.error(f"bot在群{event.get_group_id()}权限不足，禁言失败")
-                        pass
-                return True
-        return False
+        if self.find_hit(event.message_str, ban_words, gid) is None:
+            return False
+        # 撤回消息
+        try:
+            message_id = event.message_obj.message_id
+            await event.bot.delete_msg(message_id=int(message_id))
+        except Exception:
+            pass
+        # 禁言发送者
+        ban_time = await self.db.get(gid, "word_ban_time", 0)
+        if ban_time > 0:
+            try:
+                await event.bot.set_group_ban(
+                    group_id=int(event.get_group_id()),
+                    user_id=int(event.get_sender_id()),
+                    duration=ban_time,
+                )
+            except Exception:
+                logger.error(f"bot在群{event.get_group_id()}权限不足，禁言失败")
+                pass
+        return True
+
+
+class SpamDetector:
+    """刷屏模块：滑动窗口状态、刷屏时长配置与刷屏禁言执法。"""
+
+    def __init__(self, config: PluginConfig, db: QQAdminDB):
+        self.cfg = config
+        self.db = db
+        # 不用 maxlen 固定，动态读取 cfg.spamming_count，便于热更新与手动裁剪
+        self.msg_timestamps: dict[str, dict[str, deque[float]]] = defaultdict(lambda: defaultdict(deque))
+        self.last_banned_time: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     async def handle_spamming_ban_time(self, event: AiocqhttpMessageEvent, time: int | None):
         """设置刷屏禁言时长"""
@@ -246,6 +261,16 @@ class BanproHandle:
                 self.msg_timestamps.pop(group_id, None)
             if not self.last_banned_time[group_id]:
                 self.last_banned_time.pop(group_id, None)
+
+
+class VoteSession:
+    """投票模块：一群一票的状态机、阈值提前通过与 TTL 多数决结算。"""
+
+    def __init__(self, config: PluginConfig, db: QQAdminDB):
+        self.cfg = config
+        self.db = db
+        # 记录投票 {group_id: {"target": target_id, "votes": {user_id: bool}, "expire": timestamp, "threshold": threshold,}}
+        self.vote_cache: dict[str, dict] = {}
 
     async def start_vote_mute(self, event, ban_time: int | None = None):
         """
@@ -383,3 +408,66 @@ class BanproHandle:
         # 移除“反对阈值提前否决”，仅保留赞同阈值提前通过；否则等待 TTL 多数决，避免少数反对劫持
         # 否则展示当前进度
         await event.send(event.plain_result(f"禁言【{nickname}】：\n赞同({agree_count}/{threshold})\n反对({disagree_count}/{threshold})"))
+
+
+class BanproHandle:
+    """禁言防护门面：对外 API 与拆分前完全一致，内部按词表/刷屏/投票分工。"""
+
+    def __init__(self, config: PluginConfig, db: QQAdminDB):
+        self.cfg = config
+        self.db = db
+        self.lexicon = LexiconStore(config, db)
+        self.spam = SpamDetector(config, db)
+        self.votes = VoteSession(config, db)
+
+    @property
+    def builtin_ban_version(self) -> str:
+        return self.lexicon.builtin_ban_version
+
+    # -----------词表-----------------
+
+    def get_global_ban_words(self) -> list[str]:
+        return self.lexicon.get_global_ban_words()
+
+    def get_available_builtin_ban_words(self) -> list[str]:
+        return self.lexicon.get_available_builtin_ban_words()
+
+    def set_global_ban_words(self, words: list[str]) -> list[str]:
+        return self.lexicon.set_global_ban_words(words)
+
+    def import_builtin_ban_words(self, words: list[str]) -> list[str]:
+        return self.lexicon.import_builtin_ban_words(words)
+
+    def restore_builtin_ban_words(self) -> list[str]:
+        return self.lexicon.restore_builtin_ban_words()
+
+    async def handle_word_ban_time(self, event: AiocqhttpMessageEvent, time: int | None):
+        await self.lexicon.handle_word_ban_time(event, time)
+
+    async def handle_ban_words(self, event: AiocqhttpMessageEvent):
+        await self.lexicon.handle_ban_words(event)
+
+    async def handle_builtin_ban_words(self, event: AiocqhttpMessageEvent, mode_str: str | bool | None):
+        await self.lexicon.handle_builtin_ban_words(event, mode_str)
+
+    async def on_ban_words(self, event: AiocqhttpMessageEvent):
+        await self.lexicon.on_ban_words(event)
+
+    # -----------刷屏-----------------
+
+    async def handle_spamming_ban_time(self, event: AiocqhttpMessageEvent, time: int | None):
+        await self.spam.handle_spamming_ban_time(event, time)
+
+    async def spamming_ban(self, event: AiocqhttpMessageEvent):
+        await self.spam.spamming_ban(event)
+
+    # -----------投票-----------------
+
+    async def start_vote_mute(self, event, ban_time: int | None = None):
+        await self.votes.start_vote_mute(event, ban_time)
+
+    async def cancel_vote_mute(self, event: AiocqhttpMessageEvent):
+        await self.votes.cancel_vote_mute(event)
+
+    async def vote_mute(self, event: AiocqhttpMessageEvent, agree: bool):
+        await self.votes.vote_mute(event, agree)

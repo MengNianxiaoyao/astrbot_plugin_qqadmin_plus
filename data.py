@@ -60,11 +60,6 @@ class QQAdminGlobalList:
             values.append(uid)
         return self.set(list_type, values)
 
-    def remove(self, list_type: str, uid: str) -> list[str]:
-        """从指定全局名单移除用户并返回当前名单。"""
-        uid = str(uid).strip()
-        return self.set(list_type, [item for item in self.get(list_type) if item != uid])
-
     @staticmethod
     def _load_json(path: Path) -> list[str]:
         try:
@@ -160,6 +155,19 @@ class QQAdminDB:
                     except Exception:
                         logger.exception("解析 group 数据失败: %s", row["group_id"])
 
+            # 一次性迁移无 marker 的历史行：与默认值一致的删行（缺席即跟随），
+            # 其余打上显式标记落库。此后跟随判定只看 marker，不再按值比较。
+            for gid in list(self._cache.keys()):
+                record = self._cache[gid]
+                if isinstance(record, dict) and self.FOLLOW_DEFAULT_MARKER not in record:
+                    if self._legacy_values_match_defaults(record):
+                        self._cache.pop(gid, None)
+                        await self._conn.execute("DELETE FROM groups WHERE group_id = ?", (gid,))
+                    else:
+                        record[self.FOLLOW_DEFAULT_MARKER] = False
+                        await self._save_to_db(gid, record)
+            await self._conn.commit()
+
             self._initialized = True
             logger.info("QQAdminDB initialized (%d groups)", len(self._cache))
 
@@ -182,24 +190,24 @@ class QQAdminDB:
             return None
         return {key: copy.deepcopy(value) for key, value in data.items() if key != self.FOLLOW_DEFAULT_MARKER}
 
-    def _is_follow_default_data(self, data: dict | None) -> bool:
-        if data is None:
-            return True
-
-        marker = data.get(self.FOLLOW_DEFAULT_MARKER)
-        if marker is False:
-            return False
-
-        clean = self._strip_meta_fields(data) or {}
+    def _legacy_values_match_defaults(self, data: dict) -> bool:
+        """仅供 init 迁移：无 marker 历史行按值判定（迁移后不再使用）。"""
+        clean = {key: value for key, value in data.items() if key != self.FOLLOW_DEFAULT_MARKER}
         if not clean:
             return True
-
         for key, value in clean.items():
             if key not in self.default_cfg:
                 return False
             if value != self.default_cfg[key]:
                 return False
         return True
+
+    def _is_follow_default_data(self, data: dict | None) -> bool:
+        # init 迁移已消除无 marker 行：显式记录必带 marker=False，其余一律跟随。
+        # 不再按值比较——显式值恰好等于默认值也不再被误判为跟随。
+        if data is None:
+            return True
+        return data.get(self.FOLLOW_DEFAULT_MARKER, True) is not False
 
     def is_group_follow_default(self, gid: str) -> bool:
         return self._is_follow_default_data(self._cache.get(gid))
@@ -317,13 +325,6 @@ class QQAdminDB:
         if value not in lst:
             lst.append(value)
             await self.set(gid, field, lst)
-
-    async def remove(self, gid: str, field: str, value):
-        """
-        列表字段删除（自动创建列表）
-        """
-        lst = [i for i in await self.get(gid, field, []) if i != value]
-        await self.set(gid, field, lst)
 
     # ============================== 删除群配置 ==============================
 

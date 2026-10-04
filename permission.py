@@ -1,6 +1,6 @@
 import inspect
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection
 from enum import IntEnum
 from functools import wraps
 from typing import Any, cast
@@ -52,6 +52,28 @@ class PermLevel(IntEnum):
             "成员": cls.MEMBER,
         }
         return mapping.get(str(perm_str or "").strip())
+
+
+def evaluate_perm(
+    user_level: PermLevel,
+    bot_level: PermLevel,
+    required_level: PermLevel,
+    bot_required: PermLevel,
+    target_levels: Collection[PermLevel] = (),
+) -> str | None:
+    """纯判定：给定各方等级，返回阻断文案（None 表示放行）。
+
+    权限模块的测试 seam：不触网络、不读配置；`perm_block` 只负责取数，
+    判定只走这里。装饰器与 LLM 两条路径早已在 `perm_block` 会合。
+    """
+    if user_level > required_level:
+        return f"你没{required_level}权限"
+    if bot_level > bot_required:
+        return f"我没{bot_required}权限"
+    for target_level in target_levels:
+        if bot_level >= target_level:
+            return f"我动不了{target_level}"
+    return None
 
 
 class PermissionManager:
@@ -132,20 +154,14 @@ class PermissionManager:
             # 配置中权限值为无效项时回退到管理员，防止权限放松导致越权
             required_level = PermLevel.ADMIN
 
-        if user_level > required_level:
-            return f"你没{required_level}权限"
-
         bot_level = await self.get_perm_level(event, user_id=event.get_self_id())
-        if bot_level > bot_perm:
-            return f"我没{bot_perm}权限"
 
+        target_levels = []
         if check_at:
             for at_id in get_ats(event):
-                at_level = await self.get_perm_level(event, user_id=at_id)
-                if bot_level >= at_level:
-                    return f"我动不了{at_level}"
+                target_levels.append(await self.get_perm_level(event, user_id=at_id))
 
-        return None
+        return evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
 
     async def llm_perm_block(
         self,

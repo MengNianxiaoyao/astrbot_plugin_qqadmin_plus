@@ -48,14 +48,18 @@ class MemberHandle:
             return
 
         header = "进群时间：【等级】QQ-昵称\n\n"
+        await self._send_image_or_fallback(event, header + "\n\n".join(info_lines), header, info_lines)
+
+    async def _send_image_or_fallback(self, event: AiocqhttpMessageEvent, image_text: str, title: str, lines: list[str]):
+        """图片优先展示，生成失败时降级为分片文本。"""
         try:
-            url = await self.text_to_image(header + "\n\n".join(info_lines))
+            url = await self.text_to_image(image_text)
             if not url:
                 raise RuntimeError("text_to_image 未返回图片地址")
             await event.send(event.image_result(url))
         except Exception as e:
-            logger.warning(f"生成群成员列表图片失败，回退为文本发送：{e}")
-            await self._send_text_fallback(event, header, info_lines)
+            logger.warning(f"生成图片失败，回退为文本发送：{e}")
+            await self._send_text_fallback(event, title, lines)
 
     async def _send_text_fallback(self, event: AiocqhttpMessageEvent, title: str, lines: list[str], chunk_size: int = 40, max_chars: int = 1500):
         """图片生成失败时，将长文本分片发送，避免单条消息超出平台长度限制（按行数与字长双限）。"""
@@ -158,14 +162,7 @@ class MemberHandle:
         if len(info_lines) > CANDIDATE_IMAGE_MAX_ROWS:
             await self._send_text_fallback(event, fallback_title, info_lines)
         else:
-            try:
-                url = await self.text_to_image(info_str)
-                if not url:
-                    raise RuntimeError("text_to_image 未返回图片地址")
-                await event.send(event.image_result(url))
-            except Exception as e:
-                logger.warning(f"生成清理候选图片失败，回退为文本发送：{e}")
-                await self._send_text_fallback(event, fallback_title, info_lines)
+            await self._send_image_or_fallback(event, info_str, fallback_title, info_lines)
 
         @session_waiter(timeout=60)  # type: ignore
         async def empty_mention_waiter(controller: SessionController, event: AiocqhttpMessageEvent):

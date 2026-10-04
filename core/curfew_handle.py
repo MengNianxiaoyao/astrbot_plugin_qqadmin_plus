@@ -192,16 +192,6 @@ class BotCurfewManager:
             self.bot_data.update({gid: {"start_time": cw._start_time_str, "end_time": cw._end_time_str} for gid, cw in self.tasks.items()})
             await self.store.save_async()
 
-    async def remove_group_on_error(self, group_id: str):
-        """当群无法操作时自动移除"""
-        if group_id in self.tasks:
-            cw = self.tasks.pop(group_id)
-            cw.stop_curfew_task()
-        if group_id in self.bot_data:
-            self.bot_data.pop(group_id)
-        await self._save()
-        logger.info(f"群 {group_id} 因操作失败已从宵禁任务中移除")
-
     async def enable_curfew(self, group_id: str, start_time: str, end_time: str):
         """创建群聊的宵禁任务"""
         if group_id in self.tasks:

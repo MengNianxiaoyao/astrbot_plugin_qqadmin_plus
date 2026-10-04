@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Mapping, MutableMapping
+from collections.abc import MutableMapping
 from pathlib import Path
-from types import MappingProxyType, UnionType
+from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from astrbot.api import logger
@@ -84,12 +84,6 @@ class ConfigNode:
             self._data[key] = value
             return
         object.__setattr__(self, key, value)
-
-    def raw_data(self) -> Mapping[str, Any]:
-        """
-        底层配置 dict 的只读视图
-        """
-        return MappingProxyType(self._data)
 
     def save_config(self) -> None:
         """

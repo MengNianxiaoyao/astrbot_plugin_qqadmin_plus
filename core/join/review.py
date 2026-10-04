@@ -5,6 +5,14 @@ from astrbot.api import logger
 
 from ...data import QQAdminDB, QQAdminGlobalList
 from ...utils import resolve_allow_ids, resolve_block_ids
+from .decision import (
+    EFFECT_BLOCK,
+    EFFECT_CLEAR_FAIL,
+    EFFECT_COUNT_FAIL,
+    Applicant,
+    GroupJoinSnapshot,
+    decide,
+)
 from .state import JoinState
 
 
@@ -121,6 +129,32 @@ class JoinReviewer:
         else:
             await self.db.add(gid, "block_ids", uid)
 
+    async def _load_snapshot(self, gid: str, uid: str, client=None) -> GroupJoinSnapshot:
+        """一次加载判定所需的全部输入（含条件 IO：开关关闭时不触发网络探测）。"""
+        full_reject = await self.db.get(gid, "join_full_reject", True)
+        single_group = await self.db.get(gid, "join_single_group", False)
+        other = await self._find_other_group(gid, uid, client) if single_group else None
+        earlier = self.state.find_earlier_application(uid, gid) if single_group and not other else None
+        max_fail = await self.db.get(gid, "join_max_time", 3)
+        return GroupJoinSnapshot(
+            join_full_reject=full_reject,
+            join_full_msg=await self.db.get(gid, "join_full_msg", "群人数已满"),
+            is_full=await self._is_group_full(gid, client) if full_reject else False,
+            join_single_group=single_group,
+            other_group=other,
+            earlier_group=earlier,
+            allow_ids=await resolve_allow_ids(self.db, self.global_list, gid),
+            block_ids=await resolve_block_ids(self.db, self.global_list, gid),
+            join_min_level=await self.db.get(gid, "join_min_level", 8),
+            join_no_match_msg=await self.db.get(gid, "join_no_match_msg", False),
+            join_reject_words=await self.db.get(gid, "join_reject_words", []),
+            reject_word_block=await self.db.get(gid, "reject_word_block", False),
+            join_accept_words=await self.db.get(gid, "join_accept_words", []),
+            join_max_time=max_fail,
+            fail_count=self.state.fail_count(f"{gid}_{uid}") if max_fail > 0 else 0,
+            join_no_match_reject=await self.db.get(gid, "join_no_match_reject"),
+        )
+
     async def should_approve(
         self,
         gid: str,
@@ -138,82 +172,13 @@ class JoinReviewer:
         / black_word_block命中黑词已拉黑 / white_word命中白词
         / max_fail超次已拉黑 / no_match未命中驳回 / manual人工审核
         """
-        # -1.群人数已满时直接拒绝（可通过“群满拒绝”命令关闭）
-        if await self.db.get(gid, "join_full_reject", True):
-            if await self._is_group_full(gid, client):
-                full_msg = await self.db.get(gid, "join_full_msg", "群人数已满")
-                return False, full_msg or "群人数已满", "full"
-
-        # -0.禁止多群加入（可通过配置关闭）
-        if await self.db.get(gid, "join_single_group", False):
-            other = await self._find_other_group(gid, uid, client)
-            if other:
-                return False, f"已加入其他群聊({other})", "multi_group"
-            earlier = self.state.find_earlier_application(uid, gid)
-            if earlier:
-                return False, f"已申请其他群聊({earlier})", "multi_group"
-
-        # 0.白名单用户直接通过
-        allow_ids = await resolve_allow_ids(self.db, self.global_list, gid)
-        if uid in allow_ids:
-            return True, "白名单用户", "allow"
-
-        # 1.黑名单用户
-        block_ids = await resolve_block_ids(self.db, self.global_list, gid)
-        if uid in block_ids:
-            return False, "黑名单用户", "block"
-
-        # 2.QQ等级过低或隐藏
-        if user_level is None:
-            return None, "QQ等级可能被隐藏，人工审核", "level_hidden"
-
-        min_level = await self.db.get(gid, "join_min_level", 8)
-        if min_level > 0 and user_level is not None and user_level < min_level:
-            return False, f"QQ等级过低({user_level}<{min_level})", "level_low"
-
-        if comment:
-            # 提取答案部分
-            keyword = "\n答案："
-            if keyword in comment:
-                comment = comment.split(keyword, 1)[1]
-
-        if not comment:
-            if await self.db.get(gid, "join_no_match_msg", False):
-                return False, "验证信息为空", "empty_msg"
-        else:
-            lower_comment = comment.lower()
-            # 3.命中进群黑词
-            rkws = await self.db.get(gid, "join_reject_words", [])
-            if any(rk.lower() in lower_comment for rk in rkws):
-                if await self.db.get(gid, "reject_word_block", False):
-                    await self.add_to_block(gid, uid)
-                    return False, "命中进群黑词，已拉黑", "black_word_block"
-                return False, "命中进群黑词", "black_word"
-
-            # 4.命中进群白词
-            akws = await self.db.get(gid, "join_accept_words", [])
-            if akws and any(ak.lower() in lower_comment for ak in akws):
-                return True, "命中进群白词", "white_word"
-
-        # 5.最大失败次数（内存防爆破，带24h过期）
-        max_fail = await self.db.get(gid, "join_max_time", 3)
-        if max_fail > 0:
-            key = f"{gid}_{uid}"
-            now = time.time()
-            # 过期清理
-            if key in self.state.fail_time and now - self.state.fail_time[key] > 86400:
-                self.state.fail.pop(key, None)
-            self.state.fail[key] = self.state.fail.get(key, 0) + 1
-            self.state.fail_time[key] = now
-            if self.state.fail[key] > max_fail:
-                await self.add_to_block(gid, uid)
-                self.state.fail.pop(key, None)
-                self.state.fail_time.pop(key, None)
-                return False, f"进群尝试次数已达上限({max_fail}次)，已拉黑", "max_fail"
-
-        # 6.未命中白词时, 自动驳回
-        if await self.db.get(gid, "join_no_match_reject"):
-            return False, "未命中进群关键词", "no_match"
-
-        # 7.未命中进群关键词, 人工审核
-        return None, "人工审核", "manual"
+        snapshot = await self._load_snapshot(gid, uid, client)
+        decision = decide(snapshot, Applicant(uid, comment, user_level), time.time())
+        key = f"{gid}_{uid}"
+        if EFFECT_COUNT_FAIL in decision.effects:
+            self.state.record_fail(key)
+        if EFFECT_CLEAR_FAIL in decision.effects:
+            self.state.clear_fail(key)
+        if EFFECT_BLOCK in decision.effects:
+            await self.add_to_block(gid, uid)
+        return decision.approve, decision.reason, decision.code

@@ -55,13 +55,6 @@ def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
     return [str(seg.qq) for seg in event.get_messages() if (isinstance(seg, At) and str(seg.qq) != event.get_self_id())]
 
 
-def get_replyer_id(event: AiocqhttpMessageEvent) -> str | None:
-    """获取被引用消息者的id"""
-    for seg in event.get_messages():
-        if isinstance(seg, Reply):
-            return str(seg.sender_id)
-
-
 def get_reply_message_str(event: AiocqhttpMessageEvent) -> str | None:
     """
     获取被引用的消息解析后的纯文本消息字符串。

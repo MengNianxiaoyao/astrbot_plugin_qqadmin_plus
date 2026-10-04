@@ -26,6 +26,8 @@ API_TIMEOUT_SECONDS = 10.0
 PREFERRED_HEAD_START_SECONDS = 0.5
 # 详情/身份批量补齐的最大并发数
 HYDRATE_CONCURRENCY = 8
+# 连续判定失效多少次才清理，避免单次 API 抖动误删
+STALE_VOTES_REQUIRED = 2
 
 
 class QQGroupInfoCache:
@@ -53,6 +55,8 @@ class QQGroupInfoCache:
         self._bot_role_cache: dict[str, str] = {}
         self._bot_role_ts: dict[str, float] = {}
         self._client_bot_ids: dict[int, str] = {}
+        # 失效投票计数：单次 API 抖动不删库，连续多次判定失效才清理
+        self._stale_votes: dict[str, int] = {}
 
     # ---------- 对外接口 ----------
 
@@ -117,6 +121,43 @@ class QQGroupInfoCache:
     def last_refresh_error(self) -> str | None:
         """最近一次群列表刷新的错误（无错误返回 None），供 Web 面板展示。"""
         return self._last_refresh_error
+
+    def is_stale_group(self, group_info: dict[str, Any]) -> bool:
+        """群存活判定：live 来源或人数有效即存活；否则计票，连续失效达标才判 stale。
+
+        存活策略的唯一 owner（判定 + 计票 + 删除都在本模块）。
+        "__default__" 字面量对应 page_service.DEFAULT_GROUP_ID（避免循环导入而未引用），
+        该条目不会进入缓存路径，此处仅作防御。
+        """
+        group_id = str(group_info.get("group_id", "")).strip()
+        if not group_id or group_id == "__default__":
+            return False
+        # live 来源或人数有效 → 存活，清除投票
+        if group_info.get("source") == "live":
+            self._stale_votes.pop(group_id, None)
+            return False
+        try:
+            member_count = int(group_info.get("member_count", 0))
+        except (TypeError, ValueError):
+            member_count = 0
+        if member_count > 0:
+            self._stale_votes.pop(group_id, None)
+            return False
+        votes = self._stale_votes.get(group_id, 0) + 1
+        if votes >= STALE_VOTES_REQUIRED:
+            self._stale_votes.pop(group_id, None)
+            return True
+        self._stale_votes[group_id] = votes
+        return False
+
+    async def delete_group_data(self, group_id: str | int | None) -> str:
+        """删库 + 清缓存，返回归一化群号；非数字群号抛 ValueError。"""
+        gid = str(group_id or "").strip()
+        if not gid or not gid.isdigit():
+            raise ValueError("group_id must be a numeric string")
+        await self.db.delete_group(gid)
+        self.remove_group(gid)
+        return gid
 
     # ---------- 列表刷新管线 ----------
 
