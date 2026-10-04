@@ -83,7 +83,16 @@ function showToast(message, type = "success") {
   node.className = `toast ${type}`;
   node.textContent = message;
   els.toastLayer.appendChild(node);
-  setTimeout(() => node.remove(), 2600);
+  setTimeout(() => {
+    // 锁定当前实际高度再塌缩：否则 max-height 从 240px 起算，
+    // 布局高度要到动画末尾才开始收缩，后续 toast 会先卡住再跳变，
+    // 无法平滑补位到第一条的位置。
+    node.style.maxHeight = `${node.offsetHeight}px`;
+    void node.offsetHeight;
+    node.classList.add("is-leaving");
+    node.style.maxHeight = "0px";
+    setTimeout(() => node.remove(), 350);
+  }, 2600);
 }
 
 function buildGroupFormValues(groupPayload) {
