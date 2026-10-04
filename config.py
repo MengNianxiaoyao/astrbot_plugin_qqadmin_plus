@@ -108,7 +108,6 @@ class PluginConfig(ConfigNode):
     random_ban_time: str
     vote_ban: VoteBanConfig
     llm_get_msg_count: int
-    level_threshold: int
     perms: dict
 
     _db_version = 3
@@ -184,7 +183,6 @@ class PluginConfig(ConfigNode):
                 "threshold": self.vote_ban.threshold,
             },
             "llm_get_msg_count": self.llm_get_msg_count,
-            "level_threshold": self.level_threshold,
             "perms": dict(self.perms),
         }
 

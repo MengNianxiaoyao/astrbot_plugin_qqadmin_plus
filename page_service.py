@@ -291,7 +291,7 @@ class QQAdminPageService:
         default_updates = {key: value for key, value in updated.items() if key in default_fields}
         self._merge_dict(self.cfg.default, default_updates)
 
-        for key in ("admin_audit", "random_ban_time", "llm_get_msg_count", "level_threshold"):
+        for key in ("admin_audit", "random_ban_time", "llm_get_msg_count"):
             if key in updated:
                 setattr(self.cfg, key, updated[key])
         if "vote_ban" in updated:
@@ -308,7 +308,6 @@ class QQAdminPageService:
             "random_ban_time",
             "vote_ban",
             "llm_get_msg_count",
-            "level_threshold",
             "perms",
         ]
         return {key: copy.deepcopy(self.schema[key]) for key in keys if key in self.schema}
