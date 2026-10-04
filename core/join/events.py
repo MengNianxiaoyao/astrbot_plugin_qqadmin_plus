@@ -125,8 +125,7 @@ class JoinEvents:
             tip = "批准/驳回" if approve is None else "自动审核"
             notice = f"【进群申请-{tip}】\n群：{group_name}\n昵称：{nickname}\nQQ：{uid}\nflag：{flag}\n等级：{level}"
             # 验证消息首尾的空白/换行只会影响排版，拼入前先清理，避免与分隔 \n 叠出空行
-            comment_text = str(comment).strip() if comment else ""
-            if comment_text:
+            if comment_text := str(comment).strip() if comment else "":
                 notice += f"\n{comment_text}"
             if approve_msg:
                 notice += f"\n处理结果：{approve_msg}"

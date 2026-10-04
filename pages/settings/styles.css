@@ -305,6 +305,12 @@ textarea {
     background: var(--accent-soft);
 }
 
+.group-role-badge.member,
+.group-role-badge.unknown {
+    color: var(--muted);
+    background: var(--surface-2);
+}
+
 .group-role-icon {
     display: inline-flex;
     align-items: center;
@@ -322,6 +328,14 @@ textarea {
 
 .group-role-icon.admin {
     background: var(--accent);
+}
+
+.group-role-icon.member {
+    background: #9ca3af;
+}
+
+.group-role-icon.unknown {
+    background: #cbd5e1;
 }
 
 [data-theme="dark"] .group-role-badge.owner {

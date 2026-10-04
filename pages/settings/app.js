@@ -237,10 +237,11 @@ async function loadBootstrapData() {
 }
 
 async function syncGroupRoles(requestToken, options = {}) {
-  const { force = false } = options;
+  const { force = false, prune = true } = options;
   try {
     const groups = await api.safePost("settings/groups/roles", {
       force: force ? "1" : "0",
+      prune: prune ? "1" : "0",
     });
     if (requestToken !== groupRoleSyncToken) {
       return;
@@ -253,14 +254,30 @@ async function syncGroupRoles(requestToken, options = {}) {
   }
 }
 
-async function refreshGroups() {
-  const result = await api.safePost("settings/groups/refresh", {});
+async function refreshGroupsListOnly() {
+  const result = await api.safePost("settings/groups/refresh", { details: "0" });
   groupListError = result.refresh_error || null;
   applyGroupList(result.groups || []);
   if (groupListError) {
     showToast(groupListError, "error");
   }
   return groupListError;
+}
+
+async function calibrateGroups() {
+  const result = await api.safePost("settings/groups/calibrate", {});
+  applyGroupList(result.groups || []);
+  const failed = Array.isArray(result.failed) ? result.failed : [];
+  if (failed.length) {
+    const names = failed
+      .map((item) => item.group_name || item.group_id)
+      .join("、")
+      .slice(0, 120);
+    showToast(`人数校准失败（${failed.length} 个群）：${names}`, "error");
+  } else {
+    showToast("人数已校准");
+  }
+  return failed;
 }
 
 async function loadGroupConfig(groupId, force = false) {
@@ -324,7 +341,7 @@ async function persistGroupConfig(groupId, options = {}) {
   }
   formDirty = false;
   if (refreshList) {
-    await refreshGroups();
+    await refreshGroupsListOnly();
   }
   if (successMessage) {
     showToast(successMessage);
@@ -378,7 +395,7 @@ async function resetGroupConfig() {
   const data = await api.safePost("settings/group/reset", { group_id: target });
   renderGroupForm(data);
   formDirty = false;
-  await refreshGroups();
+  await refreshGroupsListOnly();
   showToast(`群 ${target} 已恢复默认群配置`);
 }
 
@@ -818,17 +835,30 @@ function bindEvents() {
   });
 
   els.refreshGroupsBtn.addEventListener("click", async () => {
+    if (els.refreshGroupsBtn.disabled) {
+      return;
+    }
+    els.refreshGroupsBtn.disabled = true;
+    const done = () => {
+      els.refreshGroupsBtn.disabled = false;
+    };
     try {
-      const refreshError = await refreshGroups();
-      scheduleGroupRoleSync({ force: true });
+      const refreshError = await refreshGroupsListOnly();
+      scheduleGroupRoleSync({ force: true, prune: false });
       // 全局视图下不重载群配置，避免群名覆盖全局标题
       if (currentView === "group" && currentGroup?.group_id) {
         await loadGroupConfig(currentGroup.group_id);
       }
-      if (!refreshError) {
-        showToast("群列表已同步");
+      if (refreshError || !allGroups.some((group) => !group.is_default_group)) {
+        done();
+        return;
       }
+      showToast("群列表已同步，人数校准中…");
+      calibrateGroups()
+        .catch((error) => showToast(error.message, "error"))
+        .finally(done);
     } catch (error) {
+      done();
       showToast(error.message, "error");
     }
   });

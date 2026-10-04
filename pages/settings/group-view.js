@@ -1,6 +1,18 @@
+const ROLE_BADGE_META = {
+  owner: { icon: "主", text: "群主" },
+  admin: { icon: "管", text: "管理员" },
+  member: { icon: "员", text: "成员" },
+  unknown: { icon: "？", text: "未知" },
+};
+
 function buildGroupRoleBadge(group) {
+  // 默认群是配置模板，没有身份概念，不出徽标
+  if (group?.is_default_group) {
+    return null;
+  }
   const role = String(group?.bot_role || "").toLowerCase();
-  if (role !== "owner" && role !== "admin") {
+  const meta = ROLE_BADGE_META[role];
+  if (!meta) {
     return null;
   }
 
@@ -9,11 +21,11 @@ function buildGroupRoleBadge(group) {
 
   const icon = document.createElement("span");
   icon.className = `group-role-icon ${role}`;
-  icon.textContent = role === "owner" ? "主" : "管";
+  icon.textContent = meta.icon;
   badge.appendChild(icon);
 
   const text = document.createElement("span");
-  text.textContent = role === "owner" ? "群主" : "管理员";
+  text.textContent = meta.text;
   badge.appendChild(text);
 
   return badge;
