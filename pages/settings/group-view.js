@@ -43,6 +43,9 @@ function formatMemberText(group) {
   return "";
 }
 
+const FALLBACK_AVATAR =
+  "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><rect width='96' height='96' rx='24' fill='%23e8c49a'/><text x='48' y='56' text-anchor='middle' font-size='34' fill='%23824f1f' font-family='Arial'>D</text></svg>";
+
 export function renderGroupCards({
   root,
   groups,
@@ -72,9 +75,13 @@ export function renderGroupCards({
 
     const avatar = document.createElement("img");
     avatar.className = "group-card-avatar";
-    avatar.src =
-      group.avatar ||
-      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><rect width='96' height='96' rx='24' fill='%23e8c49a'/><text x='48' y='56' text-anchor='middle' font-size='34' fill='%23824f1f' font-family='Arial'>D</text></svg>";
+    avatar.src = group.avatar || FALLBACK_AVATAR;
+    // qlogo 挂了/群号无效时回退占位图，避免破图图标（只换一次，防止循环）
+    avatar.onerror = () => {
+      if (!avatar.src.startsWith("data:")) {
+        avatar.src = FALLBACK_AVATAR;
+      }
+    };
     avatar.alt = `${group.group_name} 群头像`;
     avatar.loading = "lazy";
     avatar.decoding = "async";

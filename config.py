@@ -1,6 +1,4 @@
 # config.py
-from __future__ import annotations
-
 import random
 from collections.abc import MutableMapping
 from pathlib import Path

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import copy
 import time
@@ -637,7 +635,8 @@ class QQGroupInfoCache:
 
     @staticmethod
     def _build_avatar(group_id: str) -> str:
-        return f"https://p.qlogo.cn/gh/{group_id}/{group_id}/640"
+        # 列表缩略图仅 38px 展示（2x 屏也足够），640 是十几倍浪费
+        return f"https://p.qlogo.cn/gh/{group_id}/{group_id}/100"
 
     @staticmethod
     def _safe_int(value: Any, default: int) -> int:

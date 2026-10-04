@@ -6,8 +6,6 @@
 由调用方（JoinReviewer）执行，本模块只负责说出该做什么。
 """
 
-from __future__ import annotations
-
 from collections.abc import Collection
 from dataclasses import dataclass, field
 

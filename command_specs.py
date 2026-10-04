@@ -11,8 +11,6 @@ Note: `handle_spamming_ban_time` intentionally uses
 so the next reader doesn't "fix" it.
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from functools import wraps

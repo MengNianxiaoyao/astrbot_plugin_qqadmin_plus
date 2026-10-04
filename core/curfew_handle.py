@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import zoneinfo
@@ -67,7 +65,7 @@ class GroupCurfew:
         start_time: str,
         end_time: str,
         scheduler: AsyncIOScheduler,
-        manager: BotCurfewManager | None = None,
+        manager: "BotCurfewManager | None" = None,
     ):
         self.bot = bot
         self.group_id = group_id

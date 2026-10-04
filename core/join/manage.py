@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,7 +38,7 @@ FIELD_SPECS: dict[str, FieldSpec] = {
 }
 
 
-async def _run_bool(mgr: JoinManager, event: AiocqhttpMessageEvent, spec: FieldSpec, mode_str: str | bool | None):
+async def _run_bool(mgr: "JoinManager", event: AiocqhttpMessageEvent, spec: FieldSpec, mode_str: str | bool | None):
     gid = event.get_group_id()
     mode = parse_bool(mode_str)
     if isinstance(mode, bool):
@@ -51,7 +49,7 @@ async def _run_bool(mgr: JoinManager, event: AiocqhttpMessageEvent, spec: FieldS
         await event.send(event.plain_result(spec.show_tpl.format(v=status)))
 
 
-async def _run_words(mgr: JoinManager, event: AiocqhttpMessageEvent, spec: FieldSpec):
+async def _run_words(mgr: "JoinManager", event: AiocqhttpMessageEvent, spec: FieldSpec):
     gid = event.get_group_id()
     raw = event.message_str.partition(" ")[2]
     if raw:
@@ -63,7 +61,7 @@ async def _run_words(mgr: JoinManager, event: AiocqhttpMessageEvent, spec: Field
         await event.send(event.plain_result(spec.show_tpl.format(v=words)))
 
 
-async def _run_text(mgr: JoinManager, event: AiocqhttpMessageEvent, spec: FieldSpec):
+async def _run_text(mgr: "JoinManager", event: AiocqhttpMessageEvent, spec: FieldSpec):
     gid = event.get_group_id()
     raw = event.message_str.partition(" ")[2]
     if raw:
@@ -74,7 +72,7 @@ async def _run_text(mgr: JoinManager, event: AiocqhttpMessageEvent, spec: FieldS
         await event.send(event.plain_result(spec.show_tpl.format(v=text or spec.empty_label)))
 
 
-async def _run_int(mgr: JoinManager, event: AiocqhttpMessageEvent, spec: FieldSpec, value: int | None):
+async def _run_int(mgr: "JoinManager", event: AiocqhttpMessageEvent, spec: FieldSpec, value: int | None):
     gid = event.get_group_id()
     if isinstance(value, int):
         await mgr.db.set(gid, spec.field, value)
