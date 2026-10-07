@@ -258,13 +258,13 @@
     "default": "30~300"
   },
   "vote_ban": {
-    "description": "投票禁言配置",
-    "hint": "用于投票禁言",
+    "description": "投票配置",
+    "hint": "用于投票禁言/投票踢人（共用同一套时长与票数阈值，一群同时只能有一场投票）",
     "type": "object",
     "items": {
       "ttl": {
         "description": "投票时长（秒）",
-        "hint": "每轮投票时长到达此值时，开始结算，赞同票多于反对票时，禁言生效",
+        "hint": "每轮投票时长到达此值时开始结算，赞同票多于反对票时处罚（禁言/踢出）生效",
         "type": "int",
         "slider": {
           "min": 60,
@@ -275,7 +275,7 @@
       },
       "threshold": {
         "description": "投票通过所需票数",
-        "hint": "赞同禁言的投票数到达此值时，禁言直接生效",
+        "hint": "赞同票数到达此值时处罚直接生效",
         "type": "int",
         "slider": {
           "min": 2,
@@ -517,8 +517,8 @@
         "default": "管理员"
       },
       "vote": {
-        "description": "投票禁言指令",
-        "hint": "包括 投票禁言、赞同禁言、反对禁言、取消投票",
+        "description": "投票指令",
+        "hint": "包括 投票禁言、赞同禁言、反对禁言、投票踢人、赞同踢人、反对踢人、取消投票",
         "type": "string",
         "options": [
           "超管",
@@ -713,19 +713,19 @@
           "clear_skip_allow"
         ]
       },
+      "投票设置": {
+        "description": "用于投票禁言/投票踢人",
+        "type": "list",
+        "default": [
+          "vote_ban"
+        ]
+      },
       "其他设置": {
         "description": "随机禁言、取名轮数等杂项",
         "type": "list",
         "default": [
           "random_ban_time",
           "llm_get_msg_count"
-        ]
-      },
-      "投票禁言": {
-        "description": "用于投票禁言",
-        "type": "list",
-        "default": [
-          "vote_ban"
         ]
       }
     }
