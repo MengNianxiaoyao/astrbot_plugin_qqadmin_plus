@@ -1,3 +1,16 @@
+"""QQ 群信息缓存：多 aiocqhttp 连接聚合，带 TTL 与 DB 兜底。
+
+刷新管线（_refresh_group_list）：
+1) _load_live_groups：多 client 并行 get_group_list 合并去重。
+2) _add_db_fallbacks：实时拿不到的已知群用 DB 兜底（source=cached）。
+3) _hydrate_missing_groups：缺详情（无名/人数全 0）限流补 get_group_info。
+4) Bot 身份（bot_role）单独懒补 _hydrate_bot_roles，TTL 600s。
+读路径：list_groups（列表）/ get_group（单群详情）/ list_groups_with_bot_roles；
+并发原语：_race_clients 多连接竞速首个有效结果，_gather_limited 限流 8。
+失效判定唯一出口 is_stale_group：live 或人数>0 即存活，否则计票，
+连续 STALE_VOTES_REQUIRED 次才判失效，避免单次抖动误删。
+"""
+
 import asyncio
 import copy
 import time
@@ -9,14 +22,17 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
     AiocqhttpAdapter,
 )
 
-from .data import QQAdminDB
-
-BOT_ROLE_PRIORITY = {
-    "owner": 0,
-    "admin": 1,
-    "member": 2,
-    "unknown": 2,
-}
+from ..data import QQAdminDB
+from .utils import (
+    build_fallback_group,
+    extract_list,
+    extract_object,
+    format_error,
+    needs_detail_refresh,
+    normalize_bot_role,
+    normalize_group_summary,
+    sort_groups,
+)
 
 # OneBot 单次调用超时封顶（秒）：防实现端无响应时无限挂起，与跨群探测的超时策略一致
 API_TIMEOUT_SECONDS = 10.0
@@ -189,7 +205,7 @@ class QQGroupInfoCache:
 
             groups = list(merged_groups.values())
             self._attach_cached_bot_roles(groups)
-            self._group_list_cache = self._sort_groups(groups)
+            self._group_list_cache = sort_groups(groups)
             self._group_clients = group_clients
             # 整表已刷新，逐群详情缓存即视为过期，避免右侧面板读到旧人数
             self.invalidate()
@@ -214,9 +230,9 @@ class QQGroupInfoCache:
                 group_id = str(item.get("group_id", "")).strip()
                 if not group_id or group_id in merged_groups:
                     continue
-                merged_groups[group_id] = self._normalize_group_summary(item)
+                merged_groups[group_id] = normalize_group_summary(item)
                 group_clients[group_id] = client
-                if self._needs_detail_refresh(item, group_id):
+                if needs_detail_refresh(item, group_id):
                     missing_detail_group_ids.add(group_id)
         return merged_groups, group_clients, missing_detail_group_ids, refresh_errors
 
@@ -228,7 +244,7 @@ class QQGroupInfoCache:
         """实时接口拿不到的已知群，用 DB 兜底条目补齐并标记待补详情。"""
         for group_id in self.db.list_group_ids():
             if group_id not in merged_groups:
-                merged_groups[group_id] = self._build_fallback_group(group_id)
+                merged_groups[group_id] = build_fallback_group(group_id)
                 missing_detail_group_ids.add(group_id)
 
     def _record_refresh_error(
@@ -255,17 +271,17 @@ class QQGroupInfoCache:
         try:
             result = await self._call_action(client, "get_group_list")
         except Exception as exc:
-            formatted = self._format_error(exc)
+            formatted = format_error(exc)
             logger.warning("Failed to load QQ group list via %s: %s", label, formatted)
             return client, [], f"{label}: {formatted}"
-        items = self._extract_list(result)
+        items = extract_list(result)
         if not items and not (isinstance(result, list) or (isinstance(result, dict) and isinstance(result.get("data"), list))):
             logger.warning("QQ group list via %s returned unexpected result: %s", label, repr(result)[:500])
             return client, [], f"{label}：接口返回异常"
         return client, items, None
 
     async def _load_group_detail(self, group_id: str) -> dict[str, Any]:
-        group_detail = self._find_group_from_cache(group_id) or self._build_fallback_group(group_id)
+        group_detail = self._find_group_from_cache(group_id) or build_fallback_group(group_id)
         detail, client = await self._fetch_group_detail(group_id, preferred_client=self._group_clients.get(group_id))
         if detail:
             group_detail.update(detail)
@@ -284,7 +300,7 @@ class QQGroupInfoCache:
             group_clients = {group_id: self._group_clients.get(group_id) for group_id in merged_groups}
             failed_ids = await self._hydrate_missing_groups(merged_groups, group_clients, set(merged_groups))
             self._attach_cached_bot_roles(list(merged_groups.values()))
-            self._group_list_cache = self._sort_groups(list(merged_groups.values()))
+            self._group_list_cache = sort_groups(list(merged_groups.values()))
             for group_id, client in group_clients.items():
                 if client is not None:
                     self._group_clients[group_id] = client
@@ -328,23 +344,23 @@ class QQGroupInfoCache:
         result, client, errors = await self._race_clients(
             attempts,
             prefer_first=prefer_first,
-            valid=lambda raw: parse(self._extract_object(raw)) is not None,
+            valid=lambda raw: parse(extract_object(raw)) is not None,
         )
         if result is None or client is None:
             if errors:
                 logger.debug("Failed to %s for %s: %s", action, group_id, "; ".join(errors))
             return fallback, None
-        return parse(self._extract_object(result)), client
+        return parse(extract_object(result)), client
 
     def _parse_group_detail(self, info: dict[str, Any]) -> dict[str, Any] | None:
         if not info:
             return None
-        detail = self._normalize_group_summary(info)
+        detail = normalize_group_summary(info)
         detail["source"] = "live"
         return detail
 
     def _parse_bot_role(self, info: dict[str, Any]) -> str | None:
-        return self._normalize_bot_role(info.get("role")) if info else None
+        return normalize_bot_role(info.get("role")) if info else None
 
     async def _fetch_group_detail(
         self,
@@ -386,7 +402,7 @@ class QQGroupInfoCache:
 
             await self._gather_limited(load_role(group) for group in groups)
             self._attach_cached_bot_roles(self._group_list_cache)
-            self._group_list_cache = self._sort_groups(self._group_list_cache)
+            self._group_list_cache = sort_groups(self._group_list_cache)
 
     async def _fetch_bot_role(
         self,
@@ -431,7 +447,7 @@ class QQGroupInfoCache:
         bot_id = ""
         try:
             result = await self._call_action(client, "get_login_info")
-            info = self._extract_object(result)
+            info = extract_object(result)
             bot_id = str(info.get("user_id", "")).strip()
         except Exception:
             try:
@@ -489,7 +505,7 @@ class QQGroupInfoCache:
         try:
             result = preferred_task.result()
         except Exception as exc:
-            preferred_error = f"{self._describe_client(index, client)}: {self._format_error(exc)}"
+            preferred_error = f"{self._describe_client(index, client)}: {format_error(exc)}"
             result, client, errors = await self._race_all(attempts[1:], valid)
             errors.insert(0, preferred_error)
             return result, client, errors
@@ -517,7 +533,7 @@ class QQGroupInfoCache:
                     try:
                         result = task.result()
                     except Exception as exc:
-                        errors.append(f"{self._describe_client(index, client)}: {self._format_error(exc)}")
+                        errors.append(f"{self._describe_client(index, client)}: {format_error(exc)}")
                         continue
                     if valid is not None and not valid(result):
                         continue
@@ -561,18 +577,12 @@ class QQGroupInfoCache:
                 clients.append(client)
         return clients
 
-    # ---------- 纯函数 ----------
+    # ---------- 实例相关小工具（纯数据变换见 .utils，可单测） ----------
 
     def _describe_client(self, index: int, client: Any) -> str:
         """给 client 一个可读标识（优先用已缓存的 bot QQ，便于多开时定位）。"""
         bot_id = self._client_bot_ids.get(id(client))
         return f"client#{index}(bot {bot_id})" if bot_id else f"client#{index}"
-
-    @staticmethod
-    def _format_error(exc: BaseException) -> str:
-        """异常类型 + 信息双保险：str(exc) 为空时回退到 repr，避免日志只剩一个冒号。"""
-        message = str(exc).strip() or repr(exc)
-        return f"{type(exc).__name__}: {message}"
 
     def _attach_cached_bot_roles(self, groups: list[dict[str, Any]]) -> None:
         for group in groups:
@@ -584,82 +594,3 @@ class QQGroupInfoCache:
             if item.get("group_id") == group_id:
                 return copy.deepcopy(item)
         return None
-
-    @staticmethod
-    def _extract_list(result: Any) -> list[dict[str, Any]]:
-        if isinstance(result, list):
-            return [item for item in result if isinstance(item, dict)]
-        if isinstance(result, dict):
-            data = result.get("data")
-            if isinstance(data, list):
-                return [item for item in data if isinstance(item, dict)]
-        return []
-
-    @staticmethod
-    def _extract_object(result: Any) -> dict[str, Any]:
-        if isinstance(result, dict):
-            data = result.get("data")
-            if isinstance(data, dict):
-                return data
-            return result
-        return {}
-
-    @classmethod
-    def _normalize_group_summary(cls, raw_group: dict[str, Any]) -> dict[str, Any]:
-        group_id = str(raw_group.get("group_id", "")).strip()
-        return {
-            "group_id": group_id,
-            "group_name": str(raw_group.get("group_name", "")).strip() or f"群 {group_id}",
-            "avatar": cls._build_avatar(group_id),
-            "member_count": cls._safe_int(raw_group.get("member_count"), 0),
-            "max_member_count": cls._safe_int(raw_group.get("max_member_count"), 0),
-            "source": "live",
-        }
-
-    @classmethod
-    def _needs_detail_refresh(cls, raw_group: dict[str, Any], group_id: str) -> bool:
-        # 真实群至少有机器人在内，人数全 0 即视为缺数，一并补详情自愈
-        missing_counts = not cls._safe_int(raw_group.get("member_count"), 0) and not cls._safe_int(raw_group.get("max_member_count"), 0)
-        return not str(raw_group.get("group_name", "")).strip() or not group_id or missing_counts
-
-    @classmethod
-    def _build_fallback_group(cls, group_id: str) -> dict[str, Any]:
-        return {
-            "group_id": group_id,
-            "group_name": f"群 {group_id}",
-            "avatar": cls._build_avatar(group_id),
-            "member_count": 0,
-            "max_member_count": 0,
-            "source": "cached",
-        }
-
-    @staticmethod
-    def _build_avatar(group_id: str) -> str:
-        # 列表缩略图仅 38px 展示（2x 屏也足够），640 是十几倍浪费
-        return f"https://p.qlogo.cn/gh/{group_id}/{group_id}/100"
-
-    @staticmethod
-    def _safe_int(value: Any, default: int) -> int:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _normalize_bot_role(value: Any) -> str:
-        role = str(value or "").strip().lower()
-        if role in {"owner", "admin", "member"}:
-            return role
-        return "unknown"
-
-    @staticmethod
-    def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return sorted(
-            groups,
-            key=lambda item: (
-                BOT_ROLE_PRIORITY.get(str(item.get("bot_role", "unknown")), 2),
-                not str(item.get("group_id", "")).isdigit(),
-                int(item["group_id"]) if str(item.get("group_id", "")).isdigit() else 0,
-                item.get("group_name", ""),
-            ),
-        )

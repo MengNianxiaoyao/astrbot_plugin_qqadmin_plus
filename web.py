@@ -1,3 +1,10 @@
+"""Web 控制器：Quart 路由薄层，鉴权由 AstrBot 框架层统一处理。
+
+- register_routes 注册 /api/astrbot_plugin_qqadmin_plus/settings/*；
+  _wrap_handler 统一把 ValueError 转 400、未知异常转 500。
+- 具体逻辑委托 QQAdminPageService，本文件只做 get_json/args 解析。
+"""
+
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -12,9 +19,9 @@ except ImportError:
     quart_request_obj = None
 
 from .config import PluginConfig
-from .core.banpro_handle import BanproHandle
+from .core.banpro import BanproHandle
 from .data import QQAdminDB, QQAdminGlobalList
-from .group_info_cache import QQGroupInfoCache
+from .group_cache import QQGroupInfoCache
 from .page_service import QQAdminPageService
 
 PLUGIN_NAME = "astrbot_plugin_qqadmin_plus"

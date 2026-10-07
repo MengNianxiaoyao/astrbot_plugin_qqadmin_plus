@@ -1,3 +1,5 @@
+"""撤回：引用单条直接撤；@对象则拉最近 N 条（默认 10，上限 50）并发批量撤。"""
+
 import asyncio
 
 from astrbot.api import logger

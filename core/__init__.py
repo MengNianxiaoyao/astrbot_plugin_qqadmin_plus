@@ -1,5 +1,5 @@
-from .banpro_handle import BanproHandle
-from .curfew_handle import CurfewHandle
+from .banpro import BanproHandle
+from .curfew import CurfewHandle
 from .file_handle import FileHandle
 from .join import JoinHandle
 from .member_handle import MemberHandle

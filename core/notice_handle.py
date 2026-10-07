@@ -1,3 +1,5 @@
+"""群公告：发布（纯文本/带图）与查看。图片先下载到本地再传 OneBot 接口。"""
+
 import textwrap
 import time
 from datetime import datetime

@@ -1,3 +1,9 @@
+"""群友管理：信息展示（图片优先、失败分片文本兜底）与清理群友。
+
+清理流程：按“未发言天数 + 等级”筛候选 → 白名单跳过 → 图片/文本确认 →
+session_waiter 等“确认清理/取消清理” → 限流并发踢人。
+"""
+
 import asyncio
 from datetime import datetime
 

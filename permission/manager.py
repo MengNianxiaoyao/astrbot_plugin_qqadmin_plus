@@ -1,7 +1,13 @@
+"""权限取数与门面：等级查询（带 TTL 缓存）、群聊命令装饰器、LLM 工具门面。
+
+判定本身在 levels.evaluate_perm；本模块只负责取数（用户/Bot/被@等级 +
+按群 perms 取最低等级）与框架接入。两条路径（@perm_required 装饰器、
+llm_perm_block）在 perm_block 会合。
+"""
+
 import inspect
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Collection
-from enum import IntEnum
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from functools import wraps
 from typing import Any, cast
 
@@ -10,67 +16,10 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
-from .config import PluginConfig
-from .data import QQAdminDB
-from .utils import get_ats
-
-
-class PermLevel(IntEnum):
-    """
-    定义用户的权限等级。数字越小，权限越高。
-    """
-
-    SUPERUSER = 0
-    OWNER = 1
-    ADMIN = 2
-    MEMBER = 4
-    UNKNOWN = 5
-
-    def __str__(self):
-        return {
-            PermLevel.SUPERUSER: "超管",
-            PermLevel.OWNER: "群主",
-            PermLevel.ADMIN: "管理员",
-            PermLevel.MEMBER: "成员",
-            PermLevel.UNKNOWN: "未知/无权限",
-        }.get(self, "未知/无权限")
-
-    @classmethod
-    def from_str(cls, perm_str: str):
-        """
-        将权限字符串解析为权限等级。
-        仅能识别配置中的合法取值；无法识别时返回 None，由调用方决定安全的回退策略，
-        避免把恶意/无效配置解析为最低权限等级（UNKNOWN）从而放行所有用户。
-        """
-        mapping = {
-            "超管": cls.SUPERUSER,
-            "群主": cls.OWNER,
-            "管理员": cls.ADMIN,
-            "成员": cls.MEMBER,
-        }
-        return mapping.get(str(perm_str or "").strip())
-
-
-def evaluate_perm(
-    user_level: PermLevel,
-    bot_level: PermLevel,
-    required_level: PermLevel,
-    bot_required: PermLevel,
-    target_levels: Collection[PermLevel] = (),
-) -> str | None:
-    """纯判定：给定各方等级，返回阻断文案（None 表示放行）。
-
-    权限模块的测试 seam：不触网络、不读配置；`perm_block` 只负责取数，
-    判定只走这里。装饰器与 LLM 两条路径早已在 `perm_block` 会合。
-    """
-    if user_level > required_level:
-        return f"你没{required_level}权限"
-    if bot_level > bot_required:
-        return f"我没{bot_required}权限"
-    for target_level in target_levels:
-        if bot_level >= target_level:
-            return f"我动不了{target_level}"
-    return None
+from ..config import PluginConfig
+from ..data import QQAdminDB
+from ..utils import get_ats
+from .levels import PermLevel, evaluate_perm
 
 
 class PermissionManager:

@@ -1,4 +1,15 @@
 # config.py
+"""配置层：AstrBot 原生配置的强类型包装 + 运行时路径。
+
+- ConfigNode：把 dict 变成属性访问。声明字段（类型注解）读写底层 dict；
+  未声明/_开头字段只挂属性。嵌套 ConfigNode 懒加载并缓存。
+  例：cfg.vote_ban.ttl 读写的是底层 dict["vote_ban"]["ttl"]。
+- PluginConfig（根节点，唯一可 save_config）：聚合 default/admin_audit/
+  random_ban_time/vote_ban/llm_get_msg_count/perms，并派生 data_dir、
+  db_path、词库/宵禁/群文件路径。random_ban_time 形如 "30~300"，
+  非法时回退 30~300 并写回。
+"""
+
 import random
 from collections.abc import MutableMapping
 from pathlib import Path

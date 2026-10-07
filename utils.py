@@ -1,3 +1,10 @@
+"""共享小工具：At/引用解析、名单解析、图片提取、布尔解析、CQ 码解析。
+
+- get_ats 排除 Bot 自身；parse_bool 认“开/关/on/off/1/0”等，非法回 default。
+- parse_cq_to_chain 只认 at/image，未知类型/非法参数保留原文不丢弃；
+  本地图片必须落在 allowed_roots 内，否则拦截为占位符（防任意文件读取）。
+"""
+
 import re
 from datetime import datetime
 from pathlib import Path

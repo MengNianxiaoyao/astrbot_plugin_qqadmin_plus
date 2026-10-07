@@ -1,3 +1,10 @@
+"""基础群管动作：禁言/全员禁言/名片/头衔/踢/拉黑/管理员/精华/头像/群名。
+
+约定：方法只返回待发送的字符串（或 None 表无输出），不直接 send；
+权限与事件终止由 main 层装饰器处理。target_id 有值时走 LLM/程序调用，
+为空时从 @ 解析。
+"""
+
 from astrbot.api import logger
 from astrbot.core.message.components import Reply
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (

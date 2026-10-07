@@ -1,3 +1,9 @@
+"""进群配置命令：FieldSpec 表驱动，把十几个 get/set 方法压缩为三类模板。
+
+kind=bool/words/text/int：无参数查看、有参数设置；白/黑名单另支持
+"+QQ/-QQ" 增量、纯列表覆写。全局名单命令读写 JSON 文件而非按群 DB。
+"""
+
 from dataclasses import dataclass
 from typing import Any
 

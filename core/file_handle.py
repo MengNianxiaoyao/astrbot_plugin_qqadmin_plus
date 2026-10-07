@@ -1,3 +1,9 @@
+"""群文件：上传/删除/查看。路径形态统一经 _parse_path 归一化为 (folder, file)。
+
+路径规则：纯名先按真实目录判文件夹/文件（含点文件夹名优先判文件夹）；
+数字按列表序号解析；"a/b" 左为文件夹、右为文件名（数字同样按序号解）。
+"""
+
 import re
 from datetime import datetime
 

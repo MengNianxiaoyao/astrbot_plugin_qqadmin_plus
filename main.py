@@ -1,3 +1,17 @@
+"""插件入口：命令分发薄层，不写业务逻辑。
+
+结构速览（新人先看这里）：
+- QQAdminPlugin 只做装配：PluginConfig + QQAdminDB + QQGroupInfoCache +
+  各 Handle（normal/recall/notice/banpro/join/member/file/curfew）+ Web 面板。
+- 三类入口：@filter.command 群聊命令 / @filter.llm_tool LLM 工具 /
+  event_message_type 群事件监听（禁词/刷屏/进群退群）。
+- 权限统一走 permission.perm_required_for，LLM 走 permission.llm_guarded_for；
+  元数据全在 permission.specs；业务实现委托给 core/* Handle，
+  Handle 返回字符串，main 负责 yield 给事件。
+- 加新命令三步：1) permission.specs.COMMAND_SPECS 加一行权限元数据
+  2) 在 core 对应 Handle 写业务 3) 在此加一个薄委托方法。
+"""
+
 import asyncio
 import re
 
@@ -9,7 +23,6 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 from astrbot.core.star.filter.event_message_type import EventMessageType
 
-from .command_specs import llm_guarded_for, perm_required_for
 from .config import PluginConfig
 from .core import (
     BanproHandle,
@@ -22,11 +35,13 @@ from .core import (
     RecallHandle,
 )
 from .data import QQAdminDB, QQAdminGlobalList
-from .group_info_cache import QQGroupInfoCache
+from .group_cache import QQGroupInfoCache
 from .permission import (
     PermLevel,
+    llm_guarded_for,
     perm_manager,
     perm_required,
+    perm_required_for,
 )
 from .utils import parse_bool
 from .web import QQAdminWebController
@@ -107,6 +122,7 @@ class QQAdminPlugin(Star):
             await self.db.reset_to_default(str(gid))
             yield event.plain_result("已重置本群的群管配置")
 
+    # ---------- 基础群管：禁言 / 名片 / 头衔 / 踢 / 精华 / 撤回 / 公告 ----------
     @filter.command("禁言")
     @perm_required_for("set_group_ban")
     async def set_group_ban(self, event: AiocqhttpMessageEvent, ban_time=None):
@@ -230,6 +246,7 @@ class QQAdminPlugin(Star):
         if result := await self.notice.get_group_notice(event):
             yield event.plain_result(result)
 
+    # ---------- 违禁词 / 刷屏 / 投票 / 宵禁（业务在 core/banpro* 与 core/curfew*） ----------
     @filter.command("禁词禁言")
     @perm_required_for("handle_word_ban_time")
     async def handle_word_ban_time(self, event: AiocqhttpMessageEvent, time: int | None = None):
@@ -288,8 +305,26 @@ class QQAdminPlugin(Star):
     @filter.command("取消投票")
     @perm_required_for("cancel_vote_mute")
     async def cancel_vote_mute(self, event: AiocqhttpMessageEvent):
-        """取消当前群正在进行的禁言投票"""
+        """取消当前群正在进行的投票"""
         await self.banpro.cancel_vote_mute(event)
+
+    @filter.command("投票踢人")
+    @perm_required_for("start_vote_kick")
+    async def start_vote_kick(self, event: AiocqhttpMessageEvent):
+        "投票踢人 @群友"
+        await self.banpro.start_vote_kick(event)
+
+    @filter.command("赞同踢人")
+    @perm_required_for("agree_vote_kick")
+    async def agree_vote_kick(self, event: AiocqhttpMessageEvent):
+        """同意执行当前踢出投票"""
+        await self.banpro.vote_mute(event, agree=True)
+
+    @filter.command("反对踢人")
+    @perm_required_for("disagree_vote_kick")
+    async def disagree_vote_kick(self, event: AiocqhttpMessageEvent):
+        """反对执行当前踢出投票"""
+        await self.banpro.vote_mute(event, agree=False)
 
     @filter.command("开启宵禁")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
@@ -312,6 +347,7 @@ class QQAdminPlugin(Star):
         if result := await self.curfew.stop_curfew(event):
             yield event.plain_result(result)
 
+    # ---------- 进群审核 / 欢迎 / 退群（业务在 core/join/*） ----------
     @filter.command("进群审核")
     @perm_required_for("handle_join_review")
     async def handle_join_review(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
@@ -426,6 +462,7 @@ class QQAdminPlugin(Star):
         """监听进群/退群事件"""
         await self.join.event_monitoring(event)
 
+    # ---------- 群友管理 / 群文件 ----------
     @filter.command("群友信息")
     @perm_required_for("get_group_member_list")
     async def get_group_member_list(self, event: AiocqhttpMessageEvent):
@@ -476,6 +513,7 @@ class QQAdminPlugin(Star):
         if result := await self.file.view_group_file(event, path):
             yield event.plain_result(result)
 
+    # ---------- LLM 工具（门禁由 COMMAND_SPECS 的 llm_tool 列派生，业务与群聊命令复用同一 Handle） ----------
     @llm_guarded_for("llm_set_group_ban")
     @filter.llm_tool()
     async def llm_set_group_ban(

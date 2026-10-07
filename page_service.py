@@ -1,3 +1,12 @@
+"""Web 面板业务层（无 HTTP 细节，可脱离 Quart 单测）。
+
+- Web 控制器只做参数解析/JSON 包装，校验与落库全在这里。
+- 默认群（__default__）是模板：读 PluginConfig、写回 AstrBot 原生配置；
+  普通群读 QQAdminDB 快照，follow_default=True 时删行回归跟随。
+- _sanitize_value 按 _conf_schema.json 做类型清洗：bool/int 限幅、
+  list 分词去空、带 options 只留合法值，非法回退当前值/默认值。
+"""
+
 import copy
 import json
 import re
@@ -7,9 +16,9 @@ from typing import Any
 from astrbot.api import logger
 
 from .config import PluginConfig
-from .core.banpro_handle import BanproHandle
+from .core.banpro import BanproHandle
 from .data import QQAdminDB, QQAdminGlobalList
-from .group_info_cache import QQGroupInfoCache
+from .group_cache import QQGroupInfoCache
 from .permission import perm_manager
 from .utils import parse_bool
 
