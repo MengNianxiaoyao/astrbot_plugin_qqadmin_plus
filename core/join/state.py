@@ -16,6 +16,27 @@ class JoinState:
         # 跨群申请记录：{uid: {gid: {flag, ts, name}}}，用于多群同时申请判定
         self.applied: dict[str, dict[str, dict]] = {}
 
+    def fail_count(self, key: str, now: float | None = None) -> int:
+        """读取失败计数（含 24h 过期语义，只读不 mutation）。"""
+        now = time.time() if now is None else now
+        if key in self.fail_time and now - self.fail_time[key] > 86400:
+            return 0
+        return self.fail.get(key, 0)
+
+    def record_fail(self, key: str, now: float | None = None) -> int:
+        """失败计数 +1（含 24h 过期语义），返回累加后的次数。"""
+        now = time.time() if now is None else now
+        if key in self.fail_time and now - self.fail_time[key] > 86400:
+            self.fail.pop(key, None)
+        self.fail[key] = self.fail.get(key, 0) + 1
+        self.fail_time[key] = now
+        return self.fail[key]
+
+    def clear_fail(self, key: str):
+        """清零指定键的失败计数。"""
+        self.fail.pop(key, None)
+        self.fail_time.pop(key, None)
+
     def track_pending(self, key: str, gid: str, uid: str, nickname: str, flag: str):
         """登记一条待人工审批的进群申请，供管理员回复审批时精确匹配。"""
         self.pending[key] = {

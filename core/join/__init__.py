@@ -27,7 +27,7 @@ class JoinHandle:
         self._group_cache = group_cache
         self.state = JoinState()
         self.reviewer = JoinReviewer(db, global_list, group_cache, self.state)
-        self.manager = JoinManager(config, db, global_list)
+        self.manager = JoinManager(db, global_list)
         self.approver = JoinApprover(self.state)
         self.events = JoinEvents(config, db, global_list, group_cache, self.state, self.reviewer)
 
@@ -81,18 +81,6 @@ class JoinHandle:
     async def handle_leave_block(self, event: AiocqhttpMessageEvent, mode_str):
         await self.manager.handle_leave_block(event, mode_str)
 
-    # -----------审核判定-----------------
-
-    async def should_approve(
-        self,
-        gid: str,
-        uid: str,
-        comment: str | None = None,
-        user_level: int | None = None,
-        client=None,
-    ) -> tuple[bool | None, str, str]:
-        return await self.reviewer.should_approve(gid, uid, comment, user_level, client)
-
     # ---------处理事件-----------------
 
     async def event_monitoring(self, event: AiocqhttpMessageEvent):
@@ -100,9 +88,6 @@ class JoinHandle:
         await self.events.event_monitoring(event)
 
     # ---------人工审批-----------------
-
-    async def set_approve(self, event: AiocqhttpMessageEvent, extra: str = "", approve: bool = True) -> str | None:
-        return await self.approver.set_approve(event, extra, approve)
 
     async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         """批准进群申请"""

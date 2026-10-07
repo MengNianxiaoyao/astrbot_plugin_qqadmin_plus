@@ -1,3 +1,10 @@
+"""共享小工具：At/引用解析、名单解析、图片提取、布尔解析、CQ 码解析。
+
+- get_ats 排除 Bot 自身；parse_bool 认“开/关/on/off/1/0”等，非法回 default。
+- parse_cq_to_chain 只认 at/image，未知类型/非法参数保留原文不丢弃；
+  本地图片必须落在 allowed_roots 内，否则拦截为占位符（防任意文件读取）。
+"""
+
 import re
 from datetime import datetime
 from pathlib import Path
@@ -53,13 +60,6 @@ async def resolve_block_ids(db, global_list, gid: str) -> list:
 def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
     """获取被at者们的id列表"""
     return [str(seg.qq) for seg in event.get_messages() if (isinstance(seg, At) and str(seg.qq) != event.get_self_id())]
-
-
-def get_replyer_id(event: AiocqhttpMessageEvent) -> str | None:
-    """获取被引用消息者的id"""
-    for seg in event.get_messages():
-        if isinstance(seg, Reply):
-            return str(seg.sender_id)
 
 
 def get_reply_message_str(event: AiocqhttpMessageEvent) -> str | None:
@@ -147,8 +147,8 @@ def extract_image_url(chain: list[BaseMessageComponent]) -> str | None:
     return None
 
 
-def parse_bool(mode: str | bool | None, default: bool = False):
-    """解析布尔值；输入为 None 时返回 None，调用方可据此区分查看与设置"""
+def parse_bool(mode: str | bool | None, default: bool | None = False):
+    """解析布尔值；输入为 None 时返回 None，无法识别时返回 default（可传 None 表示保留原值）"""
     if mode is None:
         return None
     if isinstance(mode, bool):
@@ -224,33 +224,37 @@ def parse_cq_to_chain(text: str, allowed_roots: list[Path] | None = None) -> lis
                     logger.warning(f"CQ image URL 解析失败: {e}, 原文: {raw}")
                     chain.append(Plain(raw))
             else:
-                # 本地路径: 限制在 allowed_roots 内，防止任意文件读取
+                # 本地路径: 必须限制在 allowed_roots 内，未传入则默认拒绝，防止任意文件读取
                 p = Path(file_path)
                 try:
                     resolved = p.resolve()
-                    if allowed_roots:
+                    if not allowed_roots:
+                        logger.warning(f"CQ image 未配置可访问目录已拦截: {raw}")
+                        chain.append(Plain("[图片加载失败]"))
+                        last_pos = match.end()
+                        continue
 
-                        def _is_allowed(path: Path) -> bool:
-                            for root in allowed_roots:
+                    def _is_allowed(path: Path) -> bool:
+                        for root in allowed_roots:
+                            try:
+                                if path.is_relative_to(root.resolve()):
+                                    return True
+                            except AttributeError:
+                                # py<3.9 fallback
                                 try:
-                                    if path.is_relative_to(root.resolve()):
-                                        return True
-                                except AttributeError:
-                                    # py<3.9 fallback
-                                    try:
-                                        path.relative_to(root.resolve())
-                                        return True
-                                    except ValueError:
-                                        continue
+                                    path.relative_to(root.resolve())
+                                    return True
                                 except ValueError:
                                     continue
-                            return False
+                            except ValueError:
+                                continue
+                        return False
 
-                        if not _is_allowed(resolved):
-                            logger.warning(f"CQ image 越权访问已拦截: {raw}")
-                            chain.append(Plain("[图片加载失败]"))
-                            last_pos = match.end()
-                            continue
+                    if not _is_allowed(resolved):
+                        logger.warning(f"CQ image 越权访问已拦截: {raw}")
+                        chain.append(Plain("[图片加载失败]"))
+                        last_pos = match.end()
+                        continue
                     if p.exists() and p.is_file():
                         chain.append(Image.fromFileSystem(str(resolved)))
                     else:

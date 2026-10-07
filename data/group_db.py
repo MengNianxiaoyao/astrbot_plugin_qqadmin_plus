@@ -1,83 +1,14 @@
+"""按群配置库：SQLite 存 JSON + 跟随默认模板语义 + 中文行导入导出。"""
+
 import asyncio
 import copy
 import json
-from pathlib import Path
 
 import aiosqlite
 from astrbot.api import logger
 
-from .config import PluginConfig
-from .utils import parse_bool
-
-
-class QQAdminGlobalList:
-    """全局白名单/黑名单，存储为 JSON 文件"""
-
-    _PATHS = {
-        "allow": "_allow_path",
-        "block": "_block_path",
-    }
-
-    def __init__(self, data_dir: Path):
-        data_dir.mkdir(parents=True, exist_ok=True)
-        self._allow_path = data_dir / "global_allow.json"
-        self._block_path = data_dir / "global_block.json"
-        self._allow: list[str] = []
-        self._block: list[str] = []
-        self._loaded = False
-
-    def load(self) -> None:
-        self._allow = self._load_json(self._allow_path)
-        self._block = self._load_json(self._block_path)
-        self._loaded = True
-
-    def _ensure_loaded(self) -> None:
-        if not self._loaded:
-            self.load()
-
-    def get(self, list_type: str) -> list[str]:
-        """获取名单副本，list_type 只能是 allow 或 block。"""
-        self._ensure_loaded()
-        if list_type not in self._PATHS:
-            raise ValueError("list_type must be 'allow' or 'block'")
-        return list(getattr(self, f"_{list_type}"))
-
-    def set(self, list_type: str, ids: list[str]) -> list[str]:
-        """覆盖指定全局名单并返回清洗后的结果。"""
-        self._ensure_loaded()
-        if list_type not in self._PATHS:
-            raise ValueError("list_type must be 'allow' or 'block'")
-        values = list(dict.fromkeys(str(uid).strip() for uid in ids if str(uid).strip()))
-        setattr(self, f"_{list_type}", values)
-        self._save_json(getattr(self, self._PATHS[list_type]), values)
-        return list(values)
-
-    def add(self, list_type: str, uid: str) -> list[str]:
-        """向指定全局名单添加用户并返回当前名单。"""
-        values = self.get(list_type)
-        uid = str(uid).strip()
-        if uid and uid not in values:
-            values.append(uid)
-        return self.set(list_type, values)
-
-    def remove(self, list_type: str, uid: str) -> list[str]:
-        """从指定全局名单移除用户并返回当前名单。"""
-        uid = str(uid).strip()
-        return self.set(list_type, [item for item in self.get(list_type) if item != uid])
-
-    @staticmethod
-    def _load_json(path: Path) -> list[str]:
-        try:
-            if path.exists():
-                data = json.loads(path.read_text(encoding="utf-8"))
-                return [str(uid) for uid in data] if isinstance(data, list) else []
-        except Exception:
-            pass
-        return []
-
-    @staticmethod
-    def _save_json(path: Path, data: list[str]):
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+from ..config import PluginConfig
+from ..utils import parse_bool
 
 
 class QQAdminDB:
@@ -160,6 +91,19 @@ class QQAdminDB:
                     except Exception:
                         logger.exception("解析 group 数据失败: %s", row["group_id"])
 
+            # 一次性迁移无 marker 的历史行：与默认值一致的删行（缺席即跟随），
+            # 其余打上显式标记落库。此后跟随判定只看 marker，不再按值比较。
+            for gid in list(self._cache.keys()):
+                record = self._cache[gid]
+                if isinstance(record, dict) and self.FOLLOW_DEFAULT_MARKER not in record:
+                    if self._legacy_values_match_defaults(record):
+                        self._cache.pop(gid, None)
+                        await self._conn.execute("DELETE FROM groups WHERE group_id = ?", (gid,))
+                    else:
+                        record[self.FOLLOW_DEFAULT_MARKER] = False
+                        await self._save_to_db(gid, record)
+            await self._conn.commit()
+
             self._initialized = True
             logger.info("QQAdminDB initialized (%d groups)", len(self._cache))
 
@@ -182,24 +126,24 @@ class QQAdminDB:
             return None
         return {key: copy.deepcopy(value) for key, value in data.items() if key != self.FOLLOW_DEFAULT_MARKER}
 
-    def _is_follow_default_data(self, data: dict | None) -> bool:
-        if data is None:
-            return True
-
-        marker = data.get(self.FOLLOW_DEFAULT_MARKER)
-        if marker is False:
-            return False
-
-        clean = self._strip_meta_fields(data) or {}
+    def _legacy_values_match_defaults(self, data: dict) -> bool:
+        """仅供 init 迁移：无 marker 历史行按值判定（迁移后不再使用）。"""
+        clean = {key: value for key, value in data.items() if key != self.FOLLOW_DEFAULT_MARKER}
         if not clean:
             return True
-
         for key, value in clean.items():
             if key not in self.default_cfg:
                 return False
             if value != self.default_cfg[key]:
                 return False
         return True
+
+    def _is_follow_default_data(self, data: dict | None) -> bool:
+        # init 迁移已消除无 marker 行：显式记录必带 marker=False，其余一律跟随。
+        # 不再按值比较——显式值恰好等于默认值也不再被误判为跟随。
+        if data is None:
+            return True
+        return data.get(self.FOLLOW_DEFAULT_MARKER, True) is not False
 
     def is_group_follow_default(self, gid: str) -> bool:
         return self._is_follow_default_data(self._cache.get(gid))
@@ -318,13 +262,6 @@ class QQAdminDB:
             lst.append(value)
             await self.set(gid, field, lst)
 
-    async def remove(self, gid: str, field: str, value):
-        """
-        列表字段删除（自动创建列表）
-        """
-        lst = [i for i in await self.get(gid, field, []) if i != value]
-        await self.set(gid, field, lst)
-
     # ============================== 删除群配置 ==============================
 
     async def delete_group(self, gid: str):
@@ -401,7 +338,7 @@ class QQAdminDB:
 
             # bool 必须优先且独占分支，避免 bool 误入 int 分支
             if isinstance(old_val, bool):
-                parsed = parse_bool(raw_v)
+                parsed = parse_bool(raw_v, default=None)
                 if parsed is not None:
                     data[eng_key] = parsed
                 # 解析失败则保留原值，避免误写

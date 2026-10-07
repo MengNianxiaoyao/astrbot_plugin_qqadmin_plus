@@ -1,6 +1,18 @@
+const ROLE_BADGE_META = {
+  owner: { icon: "主", text: "群主" },
+  admin: { icon: "管", text: "管理员" },
+  member: { icon: "员", text: "成员" },
+  unknown: { icon: "？", text: "未知" },
+};
+
 function buildGroupRoleBadge(group) {
+  // 默认群是配置模板，没有身份概念，不出徽标
+  if (group?.is_default_group) {
+    return null;
+  }
   const role = String(group?.bot_role || "").toLowerCase();
-  if (role !== "owner" && role !== "admin") {
+  const meta = ROLE_BADGE_META[role];
+  if (!meta) {
     return null;
   }
 
@@ -9,11 +21,11 @@ function buildGroupRoleBadge(group) {
 
   const icon = document.createElement("span");
   icon.className = `group-role-icon ${role}`;
-  icon.textContent = role === "owner" ? "主" : "管";
+  icon.textContent = meta.icon;
   badge.appendChild(icon);
 
   const text = document.createElement("span");
-  text.textContent = role === "owner" ? "群主" : "管理员";
+  text.textContent = meta.text;
   badge.appendChild(text);
 
   return badge;
@@ -30,6 +42,9 @@ function formatMemberText(group) {
   }
   return "";
 }
+
+const FALLBACK_AVATAR =
+  "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><rect width='96' height='96' rx='24' fill='%23e8c49a'/><text x='48' y='56' text-anchor='middle' font-size='34' fill='%23824f1f' font-family='Arial'>D</text></svg>";
 
 export function renderGroupCards({
   root,
@@ -60,9 +75,13 @@ export function renderGroupCards({
 
     const avatar = document.createElement("img");
     avatar.className = "group-card-avatar";
-    avatar.src =
-      group.avatar ||
-      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'><rect width='96' height='96' rx='24' fill='%23e8c49a'/><text x='48' y='56' text-anchor='middle' font-size='34' fill='%23824f1f' font-family='Arial'>D</text></svg>";
+    avatar.src = group.avatar || FALLBACK_AVATAR;
+    // qlogo 挂了/群号无效时回退占位图，避免破图图标（只换一次，防止循环）
+    avatar.onerror = () => {
+      if (!avatar.src.startsWith("data:")) {
+        avatar.src = FALLBACK_AVATAR;
+      }
+    };
     avatar.alt = `${group.group_name} 群头像`;
     avatar.loading = "lazy";
     avatar.decoding = "async";

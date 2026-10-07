@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""群公告：发布（纯文本/带图）与查看。图片先下载到本地再传 OneBot 接口。"""
 
 import textwrap
 import time

@@ -1,7 +1,13 @@
+"""权限取数与门面：等级查询（带 TTL 缓存）、群聊命令装饰器、LLM 工具门面。
+
+判定本身在 levels.evaluate_perm；本模块只负责取数（用户/Bot/被@等级 +
+按群 perms 取最低等级）与框架接入。两条路径（@perm_required 装饰器、
+llm_perm_block）在 perm_block 会合。
+"""
+
 import inspect
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from enum import IntEnum
 from functools import wraps
 from typing import Any, cast
 
@@ -10,48 +16,10 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
-from .config import PluginConfig
-from .data import QQAdminDB
-from .utils import get_ats
-
-
-class PermLevel(IntEnum):
-    """
-    定义用户的权限等级。数字越小，权限越高。
-    """
-
-    SUPERUSER = 0
-    OWNER = 1
-    ADMIN = 2
-    HIGH = 3
-    MEMBER = 4
-    UNKNOWN = 5
-
-    def __str__(self):
-        return {
-            PermLevel.SUPERUSER: "超管",
-            PermLevel.OWNER: "群主",
-            PermLevel.ADMIN: "管理员",
-            PermLevel.HIGH: "高等级成员",
-            PermLevel.MEMBER: "成员",
-            PermLevel.UNKNOWN: "未知/无权限",
-        }.get(self, "未知/无权限")
-
-    @classmethod
-    def from_str(cls, perm_str: str):
-        """
-        将权限字符串解析为权限等级。
-        仅能识别配置中的合法取值；无法识别时返回 None，由调用方决定安全的回退策略，
-        避免把恶意/无效配置解析为最低权限等级（UNKNOWN）从而放行所有用户。
-        """
-        mapping = {
-            "超管": cls.SUPERUSER,
-            "群主": cls.OWNER,
-            "管理员": cls.ADMIN,
-            "高等级成员": cls.HIGH,
-            "成员": cls.MEMBER,
-        }
-        return mapping.get(str(perm_str or "").strip())
+from ..config import PluginConfig
+from ..data import QQAdminDB
+from ..utils import get_ats
+from .levels import PermLevel, evaluate_perm
 
 
 class PermissionManager:
@@ -96,16 +64,13 @@ class PermissionManager:
         except Exception:
             return PermLevel.UNKNOWN
         role = info.get("role", "unknown")
-        level = int(info.get("level", 0))
-        group_config = self.db.get_group_snapshot(group_id) if self.db is not None else {"level_threshold": self.cfg.level_threshold if self.cfg else 50}
-        level_threshold = int(group_config.get("level_threshold", 50))
         match role:
             case "owner":
                 lvl = PermLevel.OWNER
             case "admin":
                 lvl = PermLevel.ADMIN
             case "member":
-                lvl = PermLevel.HIGH if level >= level_threshold else PermLevel.MEMBER
+                lvl = PermLevel.MEMBER
             case _:
                 lvl = PermLevel.UNKNOWN
         self._perm_cache[cache_key] = (lvl, time.time())
@@ -132,20 +97,14 @@ class PermissionManager:
             # 配置中权限值为无效项时回退到管理员，防止权限放松导致越权
             required_level = PermLevel.ADMIN
 
-        if user_level > required_level:
-            return f"你没{required_level}权限"
-
         bot_level = await self.get_perm_level(event, user_id=event.get_self_id())
-        if bot_level > bot_perm:
-            return f"我没{bot_perm}权限"
 
+        target_levels = []
         if check_at:
             for at_id in get_ats(event):
-                at_level = await self.get_perm_level(event, user_id=at_id)
-                if bot_level >= at_level:
-                    return f"我动不了{at_level}"
+                target_levels.append(await self.get_perm_level(event, user_id=at_id))
 
-        return None
+        return evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
 
     async def llm_perm_block(
         self,
@@ -181,12 +140,14 @@ def perm_required(
     bot_perm: PermLevel = PermLevel.ADMIN,
     perm_key: str | None = None,
     check_at: bool = True,
+    allow_private: bool = False,
 ):
     """
     权限检查装饰器。
     :param perm_key: 可选。用户执行命令所需的最低权限键名，默认使用被装饰函数的函数名。
     :param bot_perm: Bot 执行此命令所需的最低权限等级。
     :param check_at: 是否检查“是否有权对被@者实施操作”。
+    :param allow_private: 超管是否可在私聊中使用该命令；默认 False，私聊一律拒绝。
     """
 
     def decorator(
@@ -206,20 +167,28 @@ def perm_required(
             if event.platform_meta.name != "aiocqhttp":
                 return
 
-            # 私聊处理（仅 bot 管理员能收到通知，直接放行）
+            # 权限管理未初始化（私聊/群聊共用一次判断）
+            if not perm_manager._initialized or perm_manager.cfg is None:
+                logger.error(f"PermissionManager 未初始化（尝试访问权限项：{actual_perm_key}）")
+                yield event.plain_result("内部错误：权限系统未正确加载")
+                event.stop_event()
+                return
+
+            # 私聊处理：超管 + 命令显式放行才可执行，其余拒绝
             if event.is_private_chat():
+                if str(event.get_sender_id()) not in (perm_manager.cfg.admins_id or []):
+                    yield event.plain_result("该命令仅支持在群聊中使用")
+                    event.stop_event()
+                    return
+                if not allow_private:
+                    yield event.plain_result("该命令不支持私聊使用，请在群聊中使用")
+                    event.stop_event()
+                    return
                 if inspect.isasyncgenfunction(func):
                     async for item in func(plugin_instance, event, *args, **kwargs):
                         yield item
                 else:
                     await cast(Awaitable[Any], func(plugin_instance, event, *args, **kwargs))
-                return
-
-            # 权限管理未初始化
-            if not perm_manager._initialized:
-                logger.error(f"PermissionManager 未初始化（尝试访问权限项：{perm_key}）")
-                yield event.plain_result("内部错误：权限系统未正确加载")
-                event.stop_event()
                 return
 
             # 判断权限

@@ -1,10 +1,19 @@
 # config.py
-from __future__ import annotations
+"""配置层：AstrBot 原生配置的强类型包装 + 运行时路径。
+
+- ConfigNode：把 dict 变成属性访问。声明字段（类型注解）读写底层 dict；
+  未声明/_开头字段只挂属性。嵌套 ConfigNode 懒加载并缓存。
+  例：cfg.vote_ban.ttl 读写的是底层 dict["vote_ban"]["ttl"]。
+- PluginConfig（根节点，唯一可 save_config）：聚合 default/admin_audit/
+  random_ban_time/vote_ban/llm_get_msg_count/perms，并派生 data_dir、
+  db_path、词库/宵禁/群文件路径。random_ban_time 形如 "30~300"，
+  非法时回退 30~300 并写回。
+"""
 
 import random
-from collections.abc import Mapping, MutableMapping
+from collections.abc import MutableMapping
 from pathlib import Path
-from types import MappingProxyType, UnionType
+from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from astrbot.api import logger
@@ -85,12 +94,6 @@ class ConfigNode:
             return
         object.__setattr__(self, key, value)
 
-    def raw_data(self) -> Mapping[str, Any]:
-        """
-        底层配置 dict 的只读视图
-        """
-        return MappingProxyType(self._data)
-
     def save_config(self) -> None:
         """
         保存配置到磁盘（仅允许在根节点调用）
@@ -114,7 +117,6 @@ class PluginConfig(ConfigNode):
     random_ban_time: str
     vote_ban: VoteBanConfig
     llm_get_msg_count: int
-    level_threshold: int
     perms: dict
 
     _db_version = 3
@@ -190,7 +192,6 @@ class PluginConfig(ConfigNode):
                 "threshold": self.vote_ban.threshold,
             },
             "llm_get_msg_count": self.llm_get_msg_count,
-            "level_threshold": self.level_threshold,
             "perms": dict(self.perms),
         }
 

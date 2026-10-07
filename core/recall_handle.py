@@ -1,3 +1,5 @@
+"""撤回：引用单条直接撤；@对象则拉最近 N 条（默认 10，上限 50）并发批量撤。"""
+
 import asyncio
 
 from astrbot.api import logger
@@ -6,16 +8,10 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
-from ..config import PluginConfig
-from ..data import QQAdminDB
 from ..utils import get_ats
 
 
 class RecallHandle:
-    def __init__(self, config: PluginConfig, db: QQAdminDB):
-        self.cfg = config
-        self.db = db
-
     async def delete_msg(self, event: AiocqhttpMessageEvent):
         """(引用消息)撤回 | 撤回 @某人(默认bot) 数量(默认10)"""
         client = event.bot
@@ -37,7 +33,9 @@ class RecallHandle:
             target_ids = {str(uid) for uid in target_ids}
 
             parts = event.message_str.split()
-            end_arg = parts[-1] if parts else ""
+            # 排除 @ 目标自身的 QQ 号 token，避免“撤回 @12345”把尾号误当成数量
+            count_parts = [p for p in parts if p not in target_ids]
+            end_arg = count_parts[-1] if count_parts else ""
             count = int(end_arg) if end_arg.isdigit() else 10
             count = max(1, min(count, 50))
 

@@ -1,4 +1,9 @@
-from __future__ import annotations
+"""Web 控制器：Quart 路由薄层，鉴权由 AstrBot 框架层统一处理。
+
+- register_routes 注册 /api/astrbot_plugin_qqadmin_plus/settings/*；
+  _wrap_handler 统一把 ValueError 转 400、未知异常转 500。
+- 具体逻辑委托 QQAdminPageService，本文件只做 get_json/args 解析。
+"""
 
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
@@ -14,9 +19,9 @@ except ImportError:
     quart_request_obj = None
 
 from .config import PluginConfig
-from .core.banpro_handle import BanproHandle
+from .core.banpro import BanproHandle
 from .data import QQAdminDB, QQAdminGlobalList
-from .group_info_cache import QQGroupInfoCache
+from .group_cache import QQGroupInfoCache
 from .page_service import QQAdminPageService
 
 PLUGIN_NAME = "astrbot_plugin_qqadmin_plus"
@@ -56,6 +61,12 @@ class QQAdminWebController:
                 self.page_refresh_groups,
                 ["POST"],
                 "Refresh QQ group list",
+            ),
+            (
+                "/settings/groups/calibrate",
+                self.page_calibrate_groups,
+                ["POST"],
+                "Calibrate cached QQ groups with live details",
             ),
             (
                 "/settings/groups/roles",
@@ -141,6 +152,18 @@ class QQAdminWebController:
         QQAdminWebController._check_quart_available()
         return cast(Any, quart_request_obj)
 
+    @staticmethod
+    def _parse_flag(payload: Any, key: str, default: bool) -> bool:
+        """解析 0/1 开关参数：缺省或无法识别时回退到 default。"""
+        raw = str(payload.get(key, "") or "").strip().lower()
+        if not raw:
+            return default
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        return default
+
     def _wrap_handler(self, handler: Callable[[], Awaitable]) -> Callable[[], Awaitable]:
         async def wrapped():
             self._check_quart_available()
@@ -162,27 +185,24 @@ class QQAdminWebController:
         return self._jsonify({"ok": True, "data": await self.service.get_bootstrap_payload()})
 
     async def page_refresh_groups(self):
-        return self._jsonify({"ok": True, "data": await self.service.list_groups_with_status(force=True)})
+        payload = await self._request().get_json(force=True, silent=True) or {}
+        with_details = self._parse_flag(payload, "details", True)
+        data = await self.service.list_groups_with_status(force=True, with_details=with_details)
+        return self._jsonify({"ok": True, "data": data})
+
+    async def page_calibrate_groups(self):
+        return self._jsonify({"ok": True, "data": await self.service.calibrate_groups()})
 
     async def page_refresh_group_roles(self):
         payload = await self._request().get_json(force=True, silent=True) or {}
-        force = str(payload.get("force", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        return self._jsonify({"ok": True, "data": await self.service.list_groups_with_bot_roles(force)})
+        force = self._parse_flag(payload, "force", False)
+        prune = self._parse_flag(payload, "prune", True)
+        return self._jsonify({"ok": True, "data": await self.service.list_groups_with_bot_roles(force, prune)})
 
     async def page_get_group(self):
         request = self._request()
         group_id = request.args.get("group_id", "")
-        force = request.args.get("force", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        force = self._parse_flag(request.args, "force", False)
         return self._jsonify(
             {
                 "ok": True,
