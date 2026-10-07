@@ -11,7 +11,7 @@ from pathlib import Path
 
 import anyio
 from aiohttp import ClientSession
-from astrbot import logger
+from astrbot.api import logger
 from astrbot.core.message.components import At, BaseMessageComponent, Image, Plain, Reply
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
