@@ -7,4 +7,4 @@ author: 梦念逍遥
 repo: https://github.com/MengNianxiaoyao/astrbot_plugin_qqadmin_plus
 support_platforms:
   - aiocqhttp
-astrbot_version: ">=4.24.2"
+astrbot_version: ">=4.26.0"

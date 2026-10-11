@@ -1,0 +1,14 @@
+{
+  "views": {
+    "settings": {
+      "title": "QQ群管Plus配置",
+      "description": "群配置与全局配置：群规则、名单与禁词管理"
+    }
+  },
+  "pages": {
+    "settings": {
+      "title": "QQ群管Plus配置",
+      "description": "群配置与全局配置：群规则、名单与禁词管理"
+    }
+  }
+}

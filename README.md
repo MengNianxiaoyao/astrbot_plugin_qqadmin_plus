@@ -7,7 +7,7 @@ _✨ QQ群管插件 ✨_
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.24.2-orange.svg)](https://github.com/Soulter/AstrBot)
+[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.26.0-orange.svg)](https://github.com/Soulter/AstrBot)
 [![Original](https://img.shields.io/badge/Original-Zhalslar-blue.svg)](https://github.com/Zhalslar/astrbot_plugin_qqadmin)
 
 </div>
@@ -21,7 +21,7 @@ _✨ QQ群管插件 ✨_
 
 ## 📦 安装与环境
 
-- 要求：`AstrBot >= 4.24.2`，`Python 3.10+`，已接入 `aiocqhttp` 平台的 QQ 机器人。
+- 要求：`AstrBot >= 4.26.0`，`Python 3.10+`，已接入 `aiocqhttp` 平台的 QQ 机器人。
 - 安装：在 AstrBot 插件市场搜索 `astrbot_plugin_qqadmin_plus`，点击安装即可。
 - 数据目录：插件数据存放在 AstrBot 数据目录下的 `astrbot_plugin_qqadmin_plus/`（SQLite 群配置、全局黑白名单 JSON、全局禁词 JSON、宵禁 JSON、群文件缓存等）。
 
@@ -111,7 +111,7 @@ _✨ QQ群管插件 ✨_
 
 ### 前端面板说明
 
-在 AstrBot 管理后台插件页点击本插件 Logo 进入详情页，在插件行为/页面入口中“打开”，即可进入群管面板（`/api/astrbot_plugin_qqadmin_plus/settings/*`，由 Dashboard Token 鉴权）。
+在 AstrBot 管理后台插件页点击本插件 Logo 进入详情页，在插件行为/页面入口中打开“群管面板”，即可进入群管面板（插件可视化视图 `views/settings`，前端经 bridge 调用后端 API，鉴权由 Dashboard 统一处理）。
 
 #### 群配置
 

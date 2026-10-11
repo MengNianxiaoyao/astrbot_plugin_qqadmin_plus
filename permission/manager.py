@@ -33,7 +33,7 @@ class PermissionManager:
 
     def lazy_init(self, config: PluginConfig, db: QQAdminDB):
         if self._initialized:
-            logger.warning("PermissionManager already initialized, refreshing instead")
+            logger.debug("PermissionManager already initialized, refreshing instead")
             self.refresh(config, db)
             return
         self.cfg = config

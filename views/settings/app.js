@@ -9,7 +9,7 @@ import {
 } from "./group-view.js";
 import { createThemeController } from "./theme.js";
 
-const bridge = window.AstrBotPluginPage;
+const bridge = window.AstrBotPluginView || window.AstrBotPluginPage;
 const DEFAULT_GROUP_ID = "__default__";
 const COLLAPSED_GROUP_OBJECT_PATHS = new Set(["perms"]);
 const EXPANDED_GROUP_OBJECT_PATHS = new Set(["vote_ban"]);

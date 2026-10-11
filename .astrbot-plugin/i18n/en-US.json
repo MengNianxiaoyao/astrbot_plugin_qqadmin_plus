@@ -1,0 +1,14 @@
+{
+  "views": {
+    "settings": {
+      "title": "QQ Group Admin Plus Config",
+      "description": "Group and global config: rules, lists and ban words"
+    }
+  },
+  "pages": {
+    "settings": {
+      "title": "QQ Group Admin Plus Config",
+      "description": "Group and global config: rules, lists and ban words"
+    }
+  }
+}
