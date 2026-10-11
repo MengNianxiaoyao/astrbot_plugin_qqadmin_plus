@@ -116,7 +116,7 @@ class JoinEvents:
                 silent = await self.db.get(
                     gid,
                     "join_silent_reasons",
-                    ["full", "allow", "white_word", "block", "empty_msg"],
+                    ["full", "pending_full", "allow", "white_word", "block", "empty_msg"],
                 )
                 silent = set(silent or [])
                 if code in silent:
@@ -170,6 +170,8 @@ class JoinEvents:
             await event.send(event.plain_result(msg))
 
     async def _on_increase(self, event: AiocqhttpMessageEvent, gid: str, uid: str, client):
+        # 有人进群（含站外直接审批）：对账清除其待审批登记，待审核计数不再占位
+        self.state.drop_pending_for(gid, uid)
         # 进群欢迎
         join_welcome = await self.db.get(gid, "join_welcome")
         if join_welcome:

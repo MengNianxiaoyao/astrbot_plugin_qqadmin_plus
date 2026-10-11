@@ -51,6 +51,9 @@ class JoinHandle:
     async def handle_join_full_msg(self, event: AiocqhttpMessageEvent):
         await self.manager.handle_join_full_msg(event)
 
+    async def handle_join_pending_msg(self, event: AiocqhttpMessageEvent):
+        await self.manager.handle_join_pending_msg(event)
+
     async def handle_join_min_level(self, event: AiocqhttpMessageEvent, level: int | None):
         await self.manager.handle_join_min_level(event, level)
 

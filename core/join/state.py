@@ -2,6 +2,8 @@ import time
 
 # 跨群申请记录有效期（秒）：QQ 进群申请过期后自动失效，不再阻拦其他群申请
 APPLIED_TTL = 7 * 86400
+# 待审批登记有效期（秒）：与 track_pending 的 3 天清理口径一致，待审核计数只认新鲜记录
+PENDING_TTL = 3 * 86400
 
 
 class JoinState:
@@ -52,6 +54,22 @@ class JoinState:
             stale = [k for k, v in self.pending.items() if v["ts"] < threshold]
             for k in stale:
                 self.pending.pop(k, None)
+
+    def pending_count(self, gid: str, now: float | None = None) -> int:
+        """本群待人工审核数（只认 PENDING_TTL 内的新鲜登记；文本兜底审批不清登记，陈旧记录不计入，避免误伤待审核）。"""
+        now = time.time() if now is None else now
+        return sum(
+            1
+            for r in self.pending.values()
+            if r.get("gid") == gid and now - r.get("ts", 0) < PENDING_TTL
+        )
+
+    def drop_pending_for(self, gid: str, uid: str) -> int:
+        """清除指定群指定用户的所有待审批登记（站外审批/直接进群后对账），返回清除条数。"""
+        stale = [k for k, v in self.pending.items() if v.get("gid") == gid and v.get("uid") == uid]
+        for k in stale:
+            self.pending.pop(k, None)
+        return len(stale)
 
     def register_application(self, uid: str, gid: str, flag: str, name: str):
         """登记一次进群申请，并清理过期记录。"""

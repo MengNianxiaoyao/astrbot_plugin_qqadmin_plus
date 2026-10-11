@@ -75,6 +75,12 @@
         "type": "string",
         "default": "群人数已满"
       },
+      "join_pending_msg": {
+        "description": "待审核超限文案",
+        "hint": "待人工审核的申请超过剩余名额时，自动驳回新申请并向申请人展示的拒绝理由（受“群满自动拒绝”开关控制）",
+        "type": "string",
+        "default": "待审核人数已超过剩余名额"
+      },
       "join_single_group": {
         "description": "禁止多群加入",
         "hint": "开启后，已加入或正在申请同账号管理的其他群聊的QQ号，进群时自动拒绝",
@@ -87,6 +93,7 @@
         "type": "list",
         "options": [
           "full",
+          "pending_full",
           "allow",
           "white_word",
           "block",
@@ -100,6 +107,7 @@
         ],
         "labels": [
           "群满拒绝",
+          "待审核超限",
           "白名单通过",
           "命中白词通过",
           "黑名单",
@@ -113,6 +121,7 @@
         ],
         "default": [
           "full",
+          "pending_full",
           "allow",
           "white_word",
           "block",
@@ -658,6 +667,7 @@
           "join_max_time",
           "join_full_reject",
           "join_full_msg",
+          "join_pending_msg",
           "join_single_group",
           "reject_word_block",
           "join_silent_reasons",

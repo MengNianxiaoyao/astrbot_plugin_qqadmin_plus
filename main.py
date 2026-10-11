@@ -384,6 +384,12 @@ class QQAdminPlugin(Star):
         "群满文案 <拒绝理由>"
         await self.join.handle_join_full_msg(event)
 
+    @filter.command("待审核文案")
+    @perm_required_for("handle_join_pending_msg")
+    async def handle_join_pending_msg(self, event: AiocqhttpMessageEvent):
+        "待审核文案 <拒绝理由>，待审核申请超过剩余名额时驳回新申请的理由"
+        await self.join.handle_join_pending_msg(event)
+
     @filter.command("进群等级")
     @perm_required_for("handle_join_min_level")
     async def handle_join_min_level(self, event: AiocqhttpMessageEvent, level: int | None = None):

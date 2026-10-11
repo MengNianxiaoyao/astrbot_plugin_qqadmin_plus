@@ -37,6 +37,7 @@ FIELD_SPECS: dict[str, FieldSpec] = {
     "handle_accept_words": FieldSpec("join_accept_words", "words", [], "本群进群白词已设为：{v}", "本群进群白词：{v}"),
     "handle_reject_words": FieldSpec("join_reject_words", "words", [], "本群进群黑词已设为：{v}", "本群进群黑词：{v}"),
     "handle_join_full_msg": FieldSpec("join_full_msg", "text", "群人数已满", "本群群满拒绝文案已设为：\n{v}", "本群群满拒绝文案：\n{v}"),
+    "handle_join_pending_msg": FieldSpec("join_pending_msg", "text", "待审核人数已超过剩余名额", "本群待审核超限文案已设为：\n{v}", "本群待审核超限文案：\n{v}"),
     "handle_join_welcome": FieldSpec("join_welcome", "text", "", "本群进群欢迎语已设为：\n{v}", "本群进群欢迎语：\n{v}"),
     "handle_join_min_level": FieldSpec("join_min_level", "int", 8, "本群进群等级门槛已设为：{v} 级", "本群进群等级门槛: {v} 级", "已解除本群的进群等级限制"),
     "handle_join_max_time": FieldSpec("join_max_time", "int", None, "本群进群次数已限制为：{v} 次", "本群进群可尝试次数：{v} 次", "已解除本群的进群次数限制"),
@@ -117,6 +118,9 @@ class JoinManager:
 
     async def handle_join_full_msg(self, event: AiocqhttpMessageEvent):
         await _run_text(self, event, FIELD_SPECS["handle_join_full_msg"])
+
+    async def handle_join_pending_msg(self, event: AiocqhttpMessageEvent):
+        await _run_text(self, event, FIELD_SPECS["handle_join_pending_msg"])
 
     async def handle_join_min_level(self, event: AiocqhttpMessageEvent, level: int | None):
         await _run_int(self, event, FIELD_SPECS["handle_join_min_level"], level)
