@@ -111,7 +111,7 @@ _✨ QQ群管插件 ✨_
 
 ### 前端面板说明
 
-在 AstrBot 管理后台插件页点击本插件 Logo 进入详情页，在插件行为/页面入口中打开“群管面板”，即可进入群管面板（插件可视化视图 `views/settings`，前端经 bridge 调用后端 API，鉴权由 Dashboard 统一处理）。
+在 AstrBot 管理后台插件页点击本插件 Logo 进入详情页，在插件行为/页面入口中打开“群管面板”，即可进入群管面板（插件可视化视图 `pages/settings`，前端经 bridge 调用后端 API，鉴权由 Dashboard 统一处理；`pages/` 目录可兼容 AstrBot 4.26–4.29）。
 
 #### 群配置
 

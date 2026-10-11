@@ -973,7 +973,8 @@ async function init() {
   });
   themeController.bind();
   updateThemeButton();
-  themeController.sync(null);
+  // SDK 可能已内联注入初始 context（含 isDark）：有就直接用，别拿空值覆盖 SDK 写好的主题。
+  themeController.sync(bridge?.getContext?.() ?? null);
 
   if (!bridge) {
     return;

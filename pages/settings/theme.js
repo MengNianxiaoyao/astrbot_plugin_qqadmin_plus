@@ -27,7 +27,7 @@ export function createThemeController({ getContext, onModeChange }) {
       : null;
 
   let preference = loadPreference();
-  let effectiveMode = "light";
+  let effectiveMode = null;
   let detachSystem = null;
 
   // Dashboard 通过 context 下发主题：新版用 isDark，旧版用 theme 字符串，两者都兼容
@@ -49,7 +49,9 @@ export function createThemeController({ getContext, onModeChange }) {
     if (preference === "dark" || preference === "light") {
       return preference;
     }
-    return bridgeMode(context) || systemMode();
+    // 自动模式只认 Dashboard 下发的主题信号；推送里没有可用信号时返回 null，
+    // 由 sync 保持当前主题，而不是回退到系统主题（系统一般是浅色，会把深色面板洗白）。
+    return bridgeMode(context);
   }
 
   function apply(mode) {
@@ -59,7 +61,10 @@ export function createThemeController({ getContext, onModeChange }) {
   }
 
   function sync(context) {
-    apply(resolveMode(context));
+    // 无信号且已有主题时保持不动；首屏（还未应用过任何主题）才用系统主题兜底。
+    const mode =
+      resolveMode(context) || (effectiveMode === null ? systemMode() : effectiveMode);
+    apply(mode);
     onModeChange?.();
   }
 
