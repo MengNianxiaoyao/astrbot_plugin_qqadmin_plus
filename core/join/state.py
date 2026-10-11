@@ -58,11 +58,7 @@ class JoinState:
     def pending_count(self, gid: str, now: float | None = None) -> int:
         """本群待人工审核数（只认 PENDING_TTL 内的新鲜登记；文本兜底审批不清登记，陈旧记录不计入，避免误伤待审核）。"""
         now = time.time() if now is None else now
-        return sum(
-            1
-            for r in self.pending.values()
-            if r.get("gid") == gid and now - r.get("ts", 0) < PENDING_TTL
-        )
+        return sum(1 for r in self.pending.values() if r.get("gid") == gid and now - r.get("ts", 0) < PENDING_TTL)
 
     def drop_pending_for(self, gid: str, uid: str) -> int:
         """清除指定群指定用户的所有待审批登记（站外审批/直接进群后对账），返回清除条数。"""

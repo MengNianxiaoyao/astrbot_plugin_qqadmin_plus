@@ -126,10 +126,6 @@ def decide(snapshot: GroupJoinSnapshot, applicant: Applicant, now: float) -> Dec
 
     # 7.人工审核：先看待审核是否超额（只拦新来者，已待定的不受影响；
     #    待审核驳回不计入失败次数，避免拥挤时段误伤拉黑）
-    if (
-        snapshot.join_full_reject
-        and snapshot.slots_left is not None
-        and snapshot.pending_count + 1 > snapshot.slots_left
-    ):
+    if snapshot.join_full_reject and snapshot.slots_left is not None and snapshot.pending_count + 1 > snapshot.slots_left:
         return Decision(False, snapshot.join_pending_msg or "待审核人数已超过剩余名额", "pending_full")
     return Decision(None, "人工审核", "manual", count_effect)
