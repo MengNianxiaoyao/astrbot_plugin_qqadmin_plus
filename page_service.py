@@ -10,6 +10,7 @@
 import copy
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from astrbot.api import logger
 
 from .config import PluginConfig
 from .core.banpro import BanproHandle
+from .core.join.approve import JoinApprover
+from .core.join.state import PENDING_DEFAULT_DAYS, PENDING_TTL, JoinState
 from .data import QQAdminDB, QQAdminGlobalList
 from .group_cache import QQGroupInfoCache
 from .permission import perm_manager
@@ -34,12 +37,16 @@ class QQAdminPageService:
         group_cache: QQGroupInfoCache,
         global_list: QQAdminGlobalList,
         banpro: BanproHandle,
+        join_state: JoinState | None = None,
+        context=None,
     ):
         self.cfg = cfg
         self.db = db
         self.group_cache = group_cache
         self.global_list = global_list
         self.banpro = banpro
+        self.join_state = join_state
+        self.context = context
         self.schema = self._load_schema(cfg.plugin_dir / "_conf_schema.json")
 
     @property
@@ -277,6 +284,136 @@ class QQAdminPageService:
 
     async def restore_builtin_ban_words(self) -> list[str]:
         return self.banpro.restore_builtin_ban_words()
+
+    def _require_join_state(self) -> JoinState:
+        if self.join_state is None:
+            raise ValueError("待审核队列不可用")
+        return self.join_state
+
+    async def _pending_ttl(self, gid: str) -> float:
+        """某群待审核新鲜期（秒），与审核判定共用同一换算。"""
+        try:
+            value = await self.db.get(gid, "join_pending_ttl", PENDING_DEFAULT_DAYS)
+            if isinstance(value, bool):
+                return PENDING_TTL
+            return max(1, int(value)) * 86400.0
+        except (TypeError, ValueError):
+            return PENDING_TTL
+
+    async def _pending_group_name(self, gid: str) -> str:
+        try:
+            group = await self.group_cache.get_group(gid)
+            name = (group or {}).get("group_name", "")
+            if name:
+                return str(name)
+        except Exception:
+            pass
+        return gid
+
+    async def list_pending_approvals(self, gid: str | None = None) -> list[dict[str, Any]]:
+        """待审核队列：默认全群，可按群过滤；按申请时间排序，附新鲜标记。"""
+        state = self._require_join_state()
+        if gid:
+            gid = self._normalize_group_id(gid)
+        now = time.time()
+        items: list[dict[str, Any]] = []
+        for key, r in state.pending.items():
+            rgid = str(r.get("gid") or "")
+            if gid and rgid != gid:
+                continue
+            ttl = await self._pending_ttl(rgid)
+            items.append(
+                {
+                    "key": key,
+                    "gid": rgid,
+                    "group_name": await self._pending_group_name(rgid),
+                    "uid": str(r.get("uid") or ""),
+                    "nickname": str(r.get("nickname") or ""),
+                    "ts": r.get("ts", 0),
+                    "fresh": now - r.get("ts", 0) < ttl,
+                }
+            )
+        items.sort(key=lambda i: i["ts"])
+        return items
+
+    async def drop_pending_entry(self, key: str) -> int:
+        """清除单条待审核登记（面板手动清积压，不触达 QQ 侧申请）。"""
+        state = self._require_join_state()
+        if not key or key not in state.pending:
+            raise ValueError("待审核记录不存在")
+        return state.drop_pending(lambda k, r: k == key)
+
+    async def drop_pending_stale(self) -> int:
+        """清除所有已过新鲜期的待审核登记（各群按自家有效期判定）。"""
+        state = self._require_join_state()
+        now = time.time()
+        stale: list[str] = []
+        for key, r in state.pending.items():
+            ttl = await self._pending_ttl(str(r.get("gid") or ""))
+            if now - r.get("ts", 0) >= ttl:
+                stale.append(key)
+        stale_set = set(stale)
+        return state.drop_pending(lambda k, r: k in stale_set)
+
+    def _resolve_qq_bots(self, platform_id: str | None) -> list:
+        """按 platform_id 定位 bot；老数据无 platform_id 时退化为全部 aiocqhttp 实例。"""
+        if self.context is None:
+            raise ValueError("面板后端未接管平台，无法审批")
+        candidates = []
+        get_inst = getattr(self.context, "get_platform_inst", None)
+        if platform_id and callable(get_inst):
+            platform = get_inst(platform_id)
+            if platform is not None:
+                candidates = [platform]
+        if not candidates:
+            manager = getattr(self.context, "platform_manager", None)
+            insts = getattr(manager, "platform_insts", None) or []
+            for platform in insts:
+                try:
+                    if getattr(platform.meta(), "name", "") == "aiocqhttp":
+                        candidates.append(platform)
+                except Exception:
+                    continue
+        bots = []
+        for platform in candidates:
+            get_client = getattr(platform, "get_client", None)
+            bot = get_client() if callable(get_client) else getattr(platform, "bot", None)
+            if bot is not None:
+                bots.append(bot)
+        if not bots:
+            raise ValueError("找不到可用的 QQ 机器人实例")
+        return bots
+
+    async def settle_pending(self, key: str, approve: bool, reason: str = "") -> str:
+        """面板直接批驳：经 context 定位 bot 调 OneBot 进群审批接口，落定后清登记。
+        多 bot 时逐个尝试；站外已处理视为落定并对账。"""
+        state = self._require_join_state()
+        entry = state.pending.get(key)
+        if not entry:
+            raise ValueError("待审核记录不存在")
+        flag = str(entry.get("flag") or "")
+        nickname = str(entry.get("nickname") or "") or "该用户"
+        if not flag:
+            raise ValueError("该记录缺少 flag，请在群内处理")
+        last_err: Exception | None = None
+        for bot in self._resolve_qq_bots(entry.get("platform_id")):
+            try:
+                await bot.set_group_add_request(
+                    flag=flag, sub_type="add", approve=approve, reason="" if approve else reason
+                )
+            except Exception as e:
+                err = str(e).lower()
+                if "already agree" in err or "already refuse" in err or "already disagree" in err:
+                    state.drop_pending(lambda k, r: r.get("flag") == flag)
+                    return JoinApprover._approve_fail_hint(e)
+                last_err = e
+                continue
+            state.drop_application_by_flag(flag)
+            state.drop_pending(lambda k, r: r.get("flag") == flag)
+            if approve:
+                return f"已同意{nickname}进群"
+            return f"已拒绝{nickname}进群" + (f"\n理由：{reason}" if reason else "")
+        raise ValueError(f"审批失败：{last_err}" if last_err else "审批失败")
 
     @staticmethod
     def _load_schema(schema_path: Path) -> dict[str, Any]:

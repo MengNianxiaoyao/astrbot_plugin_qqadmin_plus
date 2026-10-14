@@ -81,6 +81,12 @@
         "type": "string",
         "default": "待审核人数已超过剩余名额"
       },
+      "join_pending_ttl": {
+        "description": "待审核有效期（天）",
+        "hint": "待人工审核的申请保留多少天，超期不再计入待审核数（最小1天）",
+        "type": "int",
+        "default": 3
+      },
       "join_single_group": {
         "description": "禁止多群加入",
         "hint": "开启后，已加入或正在申请同账号管理的其他群聊的QQ号，进群时自动拒绝",
@@ -668,6 +674,7 @@
           "join_full_reject",
           "join_full_msg",
           "join_pending_msg",
+          "join_pending_ttl",
           "join_single_group",
           "reject_word_block",
           "join_silent_reasons",

@@ -17,6 +17,7 @@ from astrbot.api.web import request as web_request
 
 from .config import PluginConfig
 from .core.banpro import BanproHandle
+from .core.join.state import JoinState
 from .data import QQAdminDB, QQAdminGlobalList
 from .group_cache import QQGroupInfoCache
 from .page_service import QQAdminPageService
@@ -35,9 +36,10 @@ class QQAdminWebController:
         group_cache: QQGroupInfoCache,
         global_list: QQAdminGlobalList,
         banpro: BanproHandle,
+        join_state: JoinState | None = None,
     ):
         self.context = context
-        self.service = QQAdminPageService(cfg, db, group_cache, global_list, banpro)
+        self.service = QQAdminPageService(cfg, db, group_cache, global_list, banpro, join_state, context)
 
     def register_routes(self) -> None:
         routes = [
@@ -124,6 +126,36 @@ class QQAdminWebController:
                 self.page_restore_builtin_ban_words,
                 ["POST"],
                 "Restore global ban words from builtin ban words",
+            ),
+            (
+                "/settings/pending",
+                self.page_get_pending,
+                ["GET"],
+                "List pending join approvals",
+            ),
+            (
+                "/settings/pending/drop",
+                self.page_drop_pending_entry,
+                ["POST"],
+                "Drop one pending join approval",
+            ),
+            (
+                "/settings/pending/drop-stale",
+                self.page_drop_pending_stale,
+                ["POST"],
+                "Drop expired pending join approvals",
+            ),
+            (
+                "/settings/pending/approve",
+                self.page_approve_pending,
+                ["POST"],
+                "Approve a pending join request",
+            ),
+            (
+                "/settings/pending/reject",
+                self.page_reject_pending,
+                ["POST"],
+                "Reject a pending join request",
             ),
         ]
         for path, handler, methods, desc in routes:
@@ -248,3 +280,29 @@ class QQAdminWebController:
     async def page_restore_builtin_ban_words(self):
         words = await self.service.restore_builtin_ban_words()
         return self._jsonify({"ok": True, "message": "已恢复内置禁词", "data": words})
+
+    async def page_get_pending(self):
+        query = self._query()
+        gid = str(query.get("group_id", "") or "").strip() or None
+        return self._jsonify({"ok": True, "data": await self.service.list_pending_approvals(gid)})
+
+    async def page_drop_pending_entry(self):
+        payload = await self._json_body()
+        count = await self.service.drop_pending_entry(str(payload.get("key", "")))
+        return self._jsonify({"ok": True, "message": f"已清除 {count} 条待审核", "data": {"cleared": count}})
+
+    async def page_drop_pending_stale(self):
+        count = await self.service.drop_pending_stale()
+        return self._jsonify({"ok": True, "message": f"已清除 {count} 条过期待审核", "data": {"cleared": count}})
+
+    async def page_approve_pending(self):
+        payload = await self._json_body()
+        message = await self.service.settle_pending(str(payload.get("key", "")), True)
+        return self._jsonify({"ok": True, "message": message})
+
+    async def page_reject_pending(self):
+        payload = await self._json_body()
+        message = await self.service.settle_pending(
+            str(payload.get("key", "")), False, str(payload.get("reason", "") or "")
+        )
+        return self._jsonify({"ok": True, "message": message})

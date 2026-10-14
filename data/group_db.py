@@ -28,6 +28,7 @@ class QQAdminDB:
         "join_full_reject": "群满自动拒绝",
         "join_full_msg": "群满拒绝文案",
         "join_pending_msg": "待审核超限文案",
+        "join_pending_ttl": "待审核有效期",
         "join_single_group": "禁止多群加入",
         "join_silent_reasons": "免通知类型",
         "reject_word_block": "命中黑词拉黑",

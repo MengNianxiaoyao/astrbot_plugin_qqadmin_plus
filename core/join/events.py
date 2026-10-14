@@ -148,7 +148,11 @@ class JoinEvents:
             if mid:
                 sent_ids.append(mid)
         for mid in sent_ids:
-            self.state.track_pending(mid, gid, uid, nickname, flag)
+            try:
+                platform_id = event.get_platform_id()
+            except Exception:
+                platform_id = None
+            self.state.track_pending(mid, gid, uid, nickname, flag, platform_id)
 
     async def _on_leave(self, event: AiocqhttpMessageEvent, gid: str, uid: str):
         should_block = await self.db.get(gid, "leave_block", False)
@@ -171,7 +175,7 @@ class JoinEvents:
 
     async def _on_increase(self, event: AiocqhttpMessageEvent, gid: str, uid: str, client):
         # 有人进群（含站外直接审批）：对账清除其待审批登记，待审核计数不再占位
-        self.state.drop_pending(lambda r: r.get("gid") == gid and r.get("uid") == uid)
+        self.state.drop_pending(lambda k, r: r.get("gid") == gid and r.get("uid") == uid)
         # 进群欢迎
         join_welcome = await self.db.get(gid, "join_welcome")
         if join_welcome:

@@ -68,7 +68,7 @@ class JoinApprover:
             await event.bot.set_group_add_request(flag=flag, sub_type="add", approve=approve, reason=extra)
             # 人工落定后清除跨群申请记录与待审批登记（引用/兜底路径统一按 flag 清）
             self.state.drop_application_by_flag(flag)
-            self.state.drop_pending(lambda r: r.get("flag") == flag)
+            self.state.drop_pending(lambda k, r: r.get("flag") == flag)
             if approve:
                 reply = f"已同意{nickname}进群"
             else:
@@ -80,7 +80,7 @@ class JoinApprover:
             err = str(e).lower()
             if "already agree" in err or "already refuse" in err or "already disagree" in err:
                 # 站外已处理：登记已无意义，按 flag 对账，避免待审核计数占位
-                self.state.drop_pending(lambda r: r.get("flag") == flag)
+                self.state.drop_pending(lambda k, r: r.get("flag") == flag)
             return hint
 
     async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):

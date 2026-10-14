@@ -5,8 +5,12 @@ from pathlib import Path
 
 # 跨群申请记录有效期（秒）：QQ 进群申请过期后自动失效，不再阻拦其他群申请
 APPLIED_TTL = 7 * 86400
-# 待审批登记有效期（秒）：与 track_pending 的 3 天清理口径一致，待审核计数只认新鲜记录
-PENDING_TTL = 3 * 86400
+# 待审批默认新鲜期（天）：各群可用 join_pending_ttl 覆盖；计数/对账只认新鲜记录
+PENDING_DEFAULT_DAYS = 3
+PENDING_TTL = PENDING_DEFAULT_DAYS * 86400
+# 待审批登记持久化上限（天）：落盘恢复与兜底清理的宽口径，只防无限增长，不参与业务判定
+PENDING_MAX_DAYS = 30
+PENDING_MAX_TTL = PENDING_MAX_DAYS * 86400
 # 待审批登记落盘文件名：重启后恢复，避免未决申请丢失
 PENDING_FILE = "join_pending.json"
 
@@ -47,14 +51,16 @@ class JoinState:
         self.fail.pop(key, None)
         self.fail_time.pop(key, None)
 
-    def fresh_entries(self, gid: str, now: float | None = None) -> list[tuple[str, dict]]:
+    def fresh_entries(
+        self, gid: str, now: float | None = None, ttl: float = PENDING_TTL
+    ) -> list[tuple[str, dict]]:
         """本群新鲜待审批登记 [(通知ID, 登记)]：计数取 len，对账取 uid，调用方各取所需。"""
         now = time.time() if now is None else now
-        return [(k, r) for k, r in self.pending.items() if r.get("gid") == gid and now - r.get("ts", 0) < PENDING_TTL]
+        return [(k, r) for k, r in self.pending.items() if r.get("gid") == gid and now - r.get("ts", 0) < ttl]
 
-    def drop_pending(self, match: Callable[[dict], bool]) -> int:
+    def drop_pending(self, match: Callable[[str, dict], bool]) -> int:
         """按谓词批量清除登记并落盘，返回清除条数。"""
-        keys = [k for k, v in self.pending.items() if match(v)]
+        keys = [k for k, v in self.pending.items() if match(k, v)]
         for k in keys:
             self.pending.pop(k, None)
         if keys:
@@ -62,9 +68,9 @@ class JoinState:
         return len(keys)
 
     def _drop_stale(self, now: float) -> None:
-        """清理过期登记，防止内存无限增长。"""
-        threshold = now - PENDING_TTL
-        self.drop_pending(lambda r: r.get("ts", 0) < threshold)
+        """清理远超上限的登记，防止内存无限增长（用宽口径，各群新鲜期只在计数时收紧）。"""
+        threshold = now - PENDING_MAX_TTL
+        self.drop_pending(lambda k, r: r.get("ts", 0) < threshold)
 
     def _load_pending(self) -> None:
         """重启恢复：只认新鲜且结构完整的登记，过期/坏数据直接丢弃。"""
@@ -86,8 +92,9 @@ class JoinState:
             and isinstance(v.get("gid"), str)
             and isinstance(v.get("uid"), str)
             and isinstance(v.get("flag"), str)
+            and (v.get("platform_id") is None or isinstance(v.get("platform_id"), str))
             and isinstance(v.get("ts"), (int, float))
-            and now - v["ts"] < PENDING_TTL
+            and now - v["ts"] < PENDING_MAX_TTL
         }
 
     def _save_pending(self) -> None:
@@ -100,13 +107,22 @@ class JoinState:
         except Exception:
             pass
 
-    def track_pending(self, key: str, gid: str, uid: str, nickname: str, flag: str):
-        """登记一条待人工审批的进群申请，供管理员回复审批时精确匹配。"""
+    def track_pending(
+        self,
+        key: str,
+        gid: str,
+        uid: str,
+        nickname: str,
+        flag: str,
+        platform_id: str | None = None,
+    ):
+        """登记一条待人工审批的进群申请，供管理员回复审批时精确匹配；platform_id 用于面板直接批驳时定位 bot。"""
         self.pending[key] = {
             "gid": gid,
             "uid": uid,
             "nickname": nickname,
             "flag": flag,
+            "platform_id": platform_id,
             "ts": time.time(),
         }
         # 简单清理过期记录，防止内存无限增长

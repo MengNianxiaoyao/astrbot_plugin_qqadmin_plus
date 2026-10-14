@@ -75,6 +75,7 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "handle_join_full_reject": CommandSpec("join"),
     "handle_join_full_msg": CommandSpec("join"),
     "handle_join_pending_msg": CommandSpec("join"),
+    "handle_join_pending_ttl": CommandSpec("join"),
     "handle_join_min_level": CommandSpec("join"),
     "handle_join_max_time": CommandSpec("join"),
     "handle_allow_ids": CommandSpec("join"),

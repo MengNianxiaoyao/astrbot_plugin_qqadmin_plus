@@ -13,7 +13,7 @@ from .decision import (
     GroupJoinSnapshot,
     decide,
 )
-from .state import JoinState
+from .state import PENDING_DEFAULT_DAYS, JoinState
 
 
 class JoinReviewer:
@@ -71,13 +71,23 @@ class JoinReviewer:
 
         return None
 
-    async def _reconcile_pending_by_membership(self, gid: str, client) -> int:
+    @staticmethod
+    def _pending_ttl_secs(value: object) -> float:
+        """新鲜期换算（天→秒）：非法/过小回退默认天数。"""
+        if isinstance(value, bool):
+            return PENDING_DEFAULT_DAYS * 86400.0
+        try:
+            return max(1, int(value)) * 86400.0  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return PENDING_DEFAULT_DAYS * 86400.0
+
+    async def _reconcile_pending_by_membership(self, gid: str, client, ttl: float) -> int:
         """按成员关系对账：待定者若已在群里（站外批准但事件漏掉），清掉其登记。
         探测失败按“不在群里”处理，只清确定已进群的。返回清除条数。"""
         if client is None:
             return 0
         uids: list[str] = []
-        for _, r in self.state.fresh_entries(gid):
+        for _, r in self.state.fresh_entries(gid, ttl=ttl):
             uid = str(r.get("uid") or "")
             if uid and uid not in uids:
                 uids.append(uid)
@@ -103,7 +113,7 @@ class JoinReviewer:
         cleared = 0
         for uid in await asyncio.gather(*[_is_member(u) for u in uids]):
             if uid:
-                cleared += self.state.drop_pending(lambda r: r.get("gid") == gid and r.get("uid") == uid)
+                cleared += self.state.drop_pending(lambda k, r: r.get("gid") == gid and r.get("uid") == uid)
         return cleared
 
     async def _find_other_group(self, gid: str, uid: str, client=None) -> str | None:
@@ -163,12 +173,13 @@ class JoinReviewer:
         max_fail = await self.db.get(gid, "join_max_time", 3)
         counts = await self._group_counts(gid, client) if full_reject else None
         slots_left = counts[1] - counts[0] if counts else None
-        pending_count = len(self.state.fresh_entries(gid))
+        pending_ttl = self._pending_ttl_secs(await self.db.get(gid, "join_pending_ttl", PENDING_DEFAULT_DAYS))
+        pending_count = len(self.state.fresh_entries(gid, ttl=pending_ttl))
         if full_reject and slots_left is not None and pending_count + 1 > slots_left and client is not None:
             # 真要超限驳回前先对账：把已在群里的待定者清掉重算，避免站外批准漏事件导致误拦。
             # 平时不触发，本次申请零额外开销。
-            await self._reconcile_pending_by_membership(gid, client)
-            pending_count = len(self.state.fresh_entries(gid))
+            await self._reconcile_pending_by_membership(gid, client, pending_ttl)
+            pending_count = len(self.state.fresh_entries(gid, ttl=pending_ttl))
         return GroupJoinSnapshot(
             join_full_reject=full_reject,
             join_full_msg=await self.db.get(gid, "join_full_msg", "群人数已满"),
