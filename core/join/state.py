@@ -21,6 +21,8 @@ def pending_ttl_secs(value: object) -> float:
         return max(1, int(value)) * 86400.0  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return PENDING_DEFAULT_DAYS * 86400.0
+
+
 # 待审批登记落盘文件名：重启后恢复，避免未决申请丢失
 PENDING_FILE = "join_pending.json"
 
