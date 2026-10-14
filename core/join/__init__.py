@@ -25,7 +25,7 @@ class JoinHandle:
         self.db = db
         self.global_list = global_list
         self._group_cache = group_cache
-        self.state = JoinState()
+        self.state = JoinState(config.data_dir)
         self.reviewer = JoinReviewer(db, global_list, group_cache, self.state)
         self.manager = JoinManager(db, global_list)
         self.approver = JoinApprover(self.state)

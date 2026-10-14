@@ -171,7 +171,7 @@ class JoinEvents:
 
     async def _on_increase(self, event: AiocqhttpMessageEvent, gid: str, uid: str, client):
         # 有人进群（含站外直接审批）：对账清除其待审批登记，待审核计数不再占位
-        self.state.drop_pending_for(gid, uid)
+        self.state.drop_pending(lambda r: r.get("gid") == gid and r.get("uid") == uid)
         # 进群欢迎
         join_welcome = await self.db.get(gid, "join_welcome")
         if join_welcome:

@@ -71,6 +71,41 @@ class JoinReviewer:
 
         return None
 
+    async def _reconcile_pending_by_membership(self, gid: str, client) -> int:
+        """按成员关系对账：待定者若已在群里（站外批准但事件漏掉），清掉其登记。
+        探测失败按“不在群里”处理，只清确定已进群的。返回清除条数。"""
+        if client is None:
+            return 0
+        uids: list[str] = []
+        for _, r in self.state.fresh_entries(gid):
+            uid = str(r.get("uid") or "")
+            if uid and uid not in uids:
+                uids.append(uid)
+        if not uids:
+            return 0
+
+        async def _is_member(uid: str) -> str | None:
+            try:
+                try:
+                    info = await asyncio.wait_for(
+                        client.get_group_member_info(group_id=int(gid), user_id=int(uid), no_cache=True),
+                        timeout=10,
+                    )
+                except TypeError:
+                    info = await asyncio.wait_for(
+                        client.get_group_member_info(group_id=int(gid), user_id=int(uid)),
+                        timeout=10,
+                    )
+            except Exception:
+                return None
+            return uid if info else None
+
+        cleared = 0
+        for uid in await asyncio.gather(*[_is_member(u) for u in uids]):
+            if uid:
+                cleared += self.state.drop_pending(lambda r: r.get("gid") == gid and r.get("uid") == uid)
+        return cleared
+
     async def _find_other_group(self, gid: str, uid: str, client=None) -> str | None:
         """检查用户是否已在同账号管理的其他群中，返回群名，否返回 None。"""
         if client is None or not self._group_cache:
@@ -127,13 +162,25 @@ class JoinReviewer:
         earlier = self.state.find_earlier_application(uid, gid) if single_group and not other else None
         max_fail = await self.db.get(gid, "join_max_time", 3)
         counts = await self._group_counts(gid, client) if full_reject else None
+        slots_left = counts[1] - counts[0] if counts else None
+        pending_count = len(self.state.fresh_entries(gid))
+        if (
+            full_reject
+            and slots_left is not None
+            and pending_count + 1 > slots_left
+            and client is not None
+        ):
+            # 真要超限驳回前先对账：把已在群里的待定者清掉重算，避免站外批准漏事件导致误拦。
+            # 平时不触发，本次申请零额外开销。
+            await self._reconcile_pending_by_membership(gid, client)
+            pending_count = len(self.state.fresh_entries(gid))
         return GroupJoinSnapshot(
             join_full_reject=full_reject,
             join_full_msg=await self.db.get(gid, "join_full_msg", "群人数已满"),
             is_full=counts is not None and counts[0] >= counts[1],
             join_pending_msg=await self.db.get(gid, "join_pending_msg", "待审核人数已超过剩余名额"),
             slots_left=counts[1] - counts[0] if counts else None,
-            pending_count=self.state.pending_count(gid),
+            pending_count=pending_count,
             join_single_group=single_group,
             other_group=other,
             earlier_group=earlier,
