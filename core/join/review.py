@@ -164,12 +164,7 @@ class JoinReviewer:
         counts = await self._group_counts(gid, client) if full_reject else None
         slots_left = counts[1] - counts[0] if counts else None
         pending_count = len(self.state.fresh_entries(gid))
-        if (
-            full_reject
-            and slots_left is not None
-            and pending_count + 1 > slots_left
-            and client is not None
-        ):
+        if full_reject and slots_left is not None and pending_count + 1 > slots_left and client is not None:
             # 真要超限驳回前先对账：把已在群里的待定者清掉重算，避免站外批准漏事件导致误拦。
             # 平时不触发，本次申请零额外开销。
             await self._reconcile_pending_by_membership(gid, client)

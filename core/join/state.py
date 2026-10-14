@@ -50,11 +50,7 @@ class JoinState:
     def fresh_entries(self, gid: str, now: float | None = None) -> list[tuple[str, dict]]:
         """本群新鲜待审批登记 [(通知ID, 登记)]：计数取 len，对账取 uid，调用方各取所需。"""
         now = time.time() if now is None else now
-        return [
-            (k, r)
-            for k, r in self.pending.items()
-            if r.get("gid") == gid and now - r.get("ts", 0) < PENDING_TTL
-        ]
+        return [(k, r) for k, r in self.pending.items() if r.get("gid") == gid and now - r.get("ts", 0) < PENDING_TTL]
 
     def drop_pending(self, match: Callable[[dict], bool]) -> int:
         """按谓词批量清除登记并落盘，返回清除条数。"""
@@ -100,9 +96,7 @@ class JoinState:
             return
         try:
             self._pending_path.parent.mkdir(parents=True, exist_ok=True)
-            self._pending_path.write_text(
-                json.dumps(self.pending, ensure_ascii=False), encoding="utf-8"
-            )
+            self._pending_path.write_text(json.dumps(self.pending, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
 
