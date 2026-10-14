@@ -1,4 +1,4 @@
-"""Web 面板业务层（无 HTTP 细节，可脱离 Quart 单测）。
+"""Web 面板业务层（无 HTTP 细节，可脱离 astrbot.api.web 单测）。
 
 - Web 控制器只做参数解析/JSON 包装，校验与落库全在这里。
 - 默认群（__default__）是模板：读 PluginConfig、写回 AstrBot 原生配置；
@@ -19,7 +19,7 @@ from astrbot.api import logger
 from .config import PluginConfig
 from .core.banpro import BanproHandle
 from .core.join.approve import JoinApprover
-from .core.join.state import PENDING_DEFAULT_DAYS, PENDING_TTL, JoinState
+from .core.join.state import PENDING_DEFAULT_DAYS, JoinState, pending_ttl_secs
 from .data import QQAdminDB, QQAdminGlobalList
 from .group_cache import QQGroupInfoCache
 from .permission import perm_manager
@@ -292,17 +292,26 @@ class QQAdminPageService:
 
     async def _pending_ttl(self, gid: str) -> float:
         """某群待审核新鲜期（秒），与审核判定共用同一换算。"""
-        try:
-            value = await self.db.get(gid, "join_pending_ttl", PENDING_DEFAULT_DAYS)
-            if isinstance(value, bool):
-                return PENDING_TTL
-            return max(1, int(value)) * 86400.0
-        except (TypeError, ValueError):
-            return PENDING_TTL
+        return pending_ttl_secs(await self.db.get(gid, "join_pending_ttl", PENDING_DEFAULT_DAYS))
 
-    async def _pending_group_name(self, gid: str) -> str:
+    async def _scan_pending(self) -> list[tuple[str, dict[str, Any], float, bool]]:
+        """全量待审核登记 [(通知ID, 登记, 该群新鲜期, 是否新鲜)]，同群 ttl 只查一次库。"""
+        state = self._require_join_state()
+        now = time.time()
+        ttl_cache: dict[str, float] = {}
+        scanned = []
+        for key, r in state.pending.items():
+            rgid = str(r.get("gid") or "")
+            if rgid not in ttl_cache:
+                ttl_cache[rgid] = await self._pending_ttl(rgid)
+            ttl = ttl_cache[rgid]
+            scanned.append((key, r, ttl, now - r.get("ts", 0) < ttl))
+        return scanned
+
+    def _pending_group_name(self, gid: str) -> str:
+        """待审核列表只配看个群名：只读列表缓存，零网络请求；缓存未命中直接显示群号。"""
         try:
-            group = await self.group_cache.get_group(gid)
+            group = self.group_cache.get_cached_group(gid)
             name = (group or {}).get("group_name", "")
             if name:
                 return str(name)
@@ -311,26 +320,27 @@ class QQAdminPageService:
         return gid
 
     async def list_pending_approvals(self, gid: str | None = None) -> list[dict[str, Any]]:
-        """待审核队列：默认全群，可按群过滤；按申请时间排序，附新鲜标记。"""
+        """待审核队列：默认全群，可按群过滤；按申请时间排序，附新鲜标记。
+        先从落盘重读，面板“刷新”可直接看到手改 json 文件的结果。"""
         state = self._require_join_state()
+        state.reload_pending()
         if gid:
             gid = self._normalize_group_id(gid)
-        now = time.time()
         items: list[dict[str, Any]] = []
-        for key, r in state.pending.items():
+        for key, r, _ttl, fresh in await self._scan_pending():
             rgid = str(r.get("gid") or "")
             if gid and rgid != gid:
                 continue
-            ttl = await self._pending_ttl(rgid)
             items.append(
                 {
                     "key": key,
                     "gid": rgid,
-                    "group_name": await self._pending_group_name(rgid),
+                    "group_name": self._pending_group_name(rgid),
                     "uid": str(r.get("uid") or ""),
                     "nickname": str(r.get("nickname") or ""),
+                    "comment": str(r.get("comment") or ""),
                     "ts": r.get("ts", 0),
-                    "fresh": now - r.get("ts", 0) < ttl,
+                    "fresh": fresh,
                 }
             )
         items.sort(key=lambda i: i["ts"])
@@ -346,13 +356,7 @@ class QQAdminPageService:
     async def drop_pending_stale(self) -> int:
         """清除所有已过新鲜期的待审核登记（各群按自家有效期判定）。"""
         state = self._require_join_state()
-        now = time.time()
-        stale: list[str] = []
-        for key, r in state.pending.items():
-            ttl = await self._pending_ttl(str(r.get("gid") or ""))
-            if now - r.get("ts", 0) >= ttl:
-                stale.append(key)
-        stale_set = set(stale)
+        stale_set = {key for key, _r, _ttl, fresh in await self._scan_pending() if not fresh}
         return state.drop_pending(lambda k, r: k in stale_set)
 
     def _resolve_qq_bots(self, platform_id: str | None) -> list:
@@ -398,9 +402,7 @@ class QQAdminPageService:
         last_err: Exception | None = None
         for bot in self._resolve_qq_bots(entry.get("platform_id")):
             try:
-                await bot.set_group_add_request(
-                    flag=flag, sub_type="add", approve=approve, reason="" if approve else reason
-                )
+                await bot.set_group_add_request(flag=flag, sub_type="add", approve=approve, reason="" if approve else reason)
             except Exception as e:
                 err = str(e).lower()
                 if "already agree" in err or "already refuse" in err or "already disagree" in err:

@@ -152,7 +152,7 @@ class JoinEvents:
                 platform_id = event.get_platform_id()
             except Exception:
                 platform_id = None
-            self.state.track_pending(mid, gid, uid, nickname, flag, platform_id)
+            self.state.track_pending(mid, gid, uid, nickname, flag, platform_id, comment if isinstance(comment, str) else None)
 
     async def _on_leave(self, event: AiocqhttpMessageEvent, gid: str, uid: str):
         should_block = await self.db.get(gid, "leave_block", False)

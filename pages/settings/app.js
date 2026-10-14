@@ -500,9 +500,14 @@ async function loadPendingApprovals() {
   }
 }
 
-function pendingLabel(item) {
-  const when = formatPendingTime(item.ts);
-  return `${item.group_name || item.gid} | ${item.nickname || "未知昵称"}(${item.uid}) | ${when}${item.fresh ? "" : "（已过期）"}`;
+function pendingActionButton(action, key, text, className) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = className;
+  btn.textContent = text;
+  btn.dataset.pendingKey = key;
+  btn.dataset.pendingAction = action;
+  return btn;
 }
 
 function renderPendingApprovals() {
@@ -527,33 +532,55 @@ function renderPendingApprovals() {
   }
 
   const list = document.createElement("div");
-  list.className = "global-list-rows";
+  list.className = "pending-cards";
   pendingData.forEach((item) => {
-    const row = document.createElement("div");
-    row.className = "global-list-row";
-    const label = document.createElement("span");
-    label.className = "global-list-row-label";
-    label.textContent = pendingLabel(item);
-    const approveBtn = document.createElement("button");
-    approveBtn.type = "button";
-    approveBtn.className = "primary-button";
-    approveBtn.textContent = "批准";
-    approveBtn.dataset.pendingKey = item.key;
-    approveBtn.dataset.pendingAction = "approve";
-    const rejectBtn = document.createElement("button");
-    rejectBtn.type = "button";
-    rejectBtn.className = "ghost-button";
-    rejectBtn.textContent = "驳回";
-    rejectBtn.dataset.pendingKey = item.key;
-    rejectBtn.dataset.pendingAction = "reject";
-    const clearBtn = document.createElement("button");
-    clearBtn.type = "button";
-    clearBtn.className = "global-list-row-del";
-    clearBtn.textContent = "清除";
-    clearBtn.dataset.pendingKey = item.key;
-    clearBtn.dataset.pendingAction = "drop";
-    row.append(label, approveBtn, rejectBtn, clearBtn);
-    list.appendChild(row);
+    const card = document.createElement("div");
+    card.className = "card pending-card";
+
+    const head = document.createElement("div");
+    head.className = "pending-card-head";
+    const group = document.createElement("span");
+    group.className = "pending-card-group";
+    group.textContent = item.group_name || item.gid;
+    head.appendChild(group);
+    if (!item.fresh) {
+      const badge = document.createElement("span");
+      badge.className = "soft-badge stale";
+      badge.textContent = "已过期";
+      head.appendChild(badge);
+    }
+    const time = document.createElement("span");
+    time.className = "pending-card-time";
+    time.textContent = formatPendingTime(item.ts);
+    head.appendChild(time);
+
+    const user = document.createElement("div");
+    user.className = "pending-card-user";
+    user.textContent = item.nickname || "未知昵称";
+    const qq = document.createElement("span");
+    qq.className = "qq";
+    qq.textContent = item.uid;
+    user.appendChild(qq);
+
+    const actions = document.createElement("div");
+    actions.className = "pending-card-actions";
+    actions.append(
+      pendingActionButton("approve", item.key, "批准", "primary-button"),
+      pendingActionButton("reject", item.key, "驳回", "ghost-button"),
+      pendingActionButton("drop", item.key, "清除", "global-list-row-del"),
+    );
+
+    card.appendChild(head);
+    card.appendChild(user);
+    const comment = (item.comment || "").trim();
+    if (comment) {
+      const commentBox = document.createElement("div");
+      commentBox.className = "pending-card-comment";
+      commentBox.textContent = comment;
+      card.appendChild(commentBox);
+    }
+    card.appendChild(actions);
+    list.appendChild(card);
   });
   body.appendChild(list);
   // 事件委托：整表共用一个监听器，避免逐行绑定

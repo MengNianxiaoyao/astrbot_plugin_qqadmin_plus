@@ -302,7 +302,5 @@ class QQAdminWebController:
 
     async def page_reject_pending(self):
         payload = await self._json_body()
-        message = await self.service.settle_pending(
-            str(payload.get("key", "")), False, str(payload.get("reason", "") or "")
-        )
+        message = await self.service.settle_pending(str(payload.get("key", "")), False, str(payload.get("reason", "") or ""))
         return self._jsonify({"ok": True, "message": message})

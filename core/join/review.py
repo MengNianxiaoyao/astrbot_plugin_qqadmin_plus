@@ -13,7 +13,7 @@ from .decision import (
     GroupJoinSnapshot,
     decide,
 )
-from .state import PENDING_DEFAULT_DAYS, JoinState
+from .state import PENDING_DEFAULT_DAYS, JoinState, pending_ttl_secs
 
 
 class JoinReviewer:
@@ -70,16 +70,6 @@ class JoinReviewer:
             logger.debug(f"获取群 {gid} 人数失败，跳过满群检查: {e}")
 
         return None
-
-    @staticmethod
-    def _pending_ttl_secs(value: object) -> float:
-        """新鲜期换算（天→秒）：非法/过小回退默认天数。"""
-        if isinstance(value, bool):
-            return PENDING_DEFAULT_DAYS * 86400.0
-        try:
-            return max(1, int(value)) * 86400.0  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return PENDING_DEFAULT_DAYS * 86400.0
 
     async def _reconcile_pending_by_membership(self, gid: str, client, ttl: float) -> int:
         """按成员关系对账：待定者若已在群里（站外批准但事件漏掉），清掉其登记。
@@ -173,7 +163,7 @@ class JoinReviewer:
         max_fail = await self.db.get(gid, "join_max_time", 3)
         counts = await self._group_counts(gid, client) if full_reject else None
         slots_left = counts[1] - counts[0] if counts else None
-        pending_ttl = self._pending_ttl_secs(await self.db.get(gid, "join_pending_ttl", PENDING_DEFAULT_DAYS))
+        pending_ttl = pending_ttl_secs(await self.db.get(gid, "join_pending_ttl", PENDING_DEFAULT_DAYS))
         pending_count = len(self.state.fresh_entries(gid, ttl=pending_ttl))
         if full_reject and slots_left is not None and pending_count + 1 > slots_left and client is not None:
             # 真要超限驳回前先对账：把已在群里的待定者清掉重算，避免站外批准漏事件导致误拦。
