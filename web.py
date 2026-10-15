@@ -1,25 +1,23 @@
-"""Web 控制器：Quart 路由薄层，鉴权由 AstrBot 框架层统一处理。
+"""Web 控制器：插件可视化视图后端，路由薄层，鉴权由 Dashboard 转发统一处理。
 
-- register_routes 注册 /api/astrbot_plugin_qqadmin_plus/settings/*；
+- register_routes 注册 /api/v1/plugins/extensions/astrbot_plugin_qqadmin_plus/*；
+  前端经 window.AstrBotPluginView bridge 用相对路径（如 settings/bootstrap）调用。
+- 请求/响应使用 astrbot.api.web（要求 AstrBot >= 4.26.0，见 metadata.yaml）；
   _wrap_handler 统一把 ValueError 转 400、未知异常转 500。
-- 具体逻辑委托 QQAdminPageService，本文件只做 get_json/args 解析。
+- 具体逻辑委托 QQAdminPageService，本文件只做参数解析。
 """
 
-from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.star import Context
-
-try:
-    from quart import jsonify as quart_jsonify
-    from quart import request as quart_request_obj
-except ImportError:
-    quart_jsonify = None
-    quart_request_obj = None
+from astrbot.api.web import error_response, json_response
+from astrbot.api.web import request as web_request
 
 from .config import PluginConfig
 from .core.banpro import BanproHandle
+from .core.join.state import JoinState
 from .data import QQAdminDB, QQAdminGlobalList
 from .group_cache import QQGroupInfoCache
 from .page_service import QQAdminPageService
@@ -28,7 +26,7 @@ PLUGIN_NAME = "astrbot_plugin_qqadmin_plus"
 
 
 class QQAdminWebController:
-    """前端面板路由；鉴权由 AstrBot 框架层统一处理（/api/* 需携带 Dashboard Token），本插件不再额外校验。"""
+    """前端面板路由；Dashboard 经 bridge 转发并统一鉴权，本插件不再额外校验。"""
 
     def __init__(
         self,
@@ -38,9 +36,10 @@ class QQAdminWebController:
         group_cache: QQGroupInfoCache,
         global_list: QQAdminGlobalList,
         banpro: BanproHandle,
+        join_state: JoinState | None = None,
     ):
         self.context = context
-        self.service = QQAdminPageService(cfg, db, group_cache, global_list, banpro)
+        self.service = QQAdminPageService(cfg, db, group_cache, global_list, banpro, join_state, context)
 
     def register_routes(self) -> None:
         routes = [
@@ -128,6 +127,36 @@ class QQAdminWebController:
                 ["POST"],
                 "Restore global ban words from builtin ban words",
             ),
+            (
+                "/settings/pending",
+                self.page_get_pending,
+                ["GET"],
+                "List pending join approvals",
+            ),
+            (
+                "/settings/pending/drop",
+                self.page_drop_pending_entry,
+                ["POST"],
+                "Drop one pending join approval",
+            ),
+            (
+                "/settings/pending/drop-stale",
+                self.page_drop_pending_stale,
+                ["POST"],
+                "Drop expired pending join approvals",
+            ),
+            (
+                "/settings/pending/approve",
+                self.page_approve_pending,
+                ["POST"],
+                "Approve a pending join request",
+            ),
+            (
+                "/settings/pending/reject",
+                self.page_reject_pending,
+                ["POST"],
+                "Reject a pending join request",
+            ),
         ]
         for path, handler, methods, desc in routes:
             self.context.register_web_api(
@@ -138,19 +167,21 @@ class QQAdminWebController:
             )
 
     @staticmethod
-    def _check_quart_available() -> None:
-        if quart_jsonify is None or quart_request_obj is None:
-            raise RuntimeError("Web framework is unavailable")
-
-    @staticmethod
     def _jsonify(payload: dict[str, Any]):
-        QQAdminWebController._check_quart_available()
-        return cast(Callable[[dict[str, Any]], Any], quart_jsonify)(payload)
+        return json_response(payload)
 
     @staticmethod
-    def _request():
-        QQAdminWebController._check_quart_available()
-        return cast(Any, quart_request_obj)
+    def _fail(message: str, status_code: int):
+        return error_response(message, status_code=status_code)
+
+    @staticmethod
+    async def _json_body() -> dict[str, Any]:
+        payload = await web_request.json(default={})
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _query() -> Mapping[str, Any]:
+        return web_request.query
 
     @staticmethod
     def _parse_flag(payload: Any, key: str, default: bool) -> bool:
@@ -166,14 +197,13 @@ class QQAdminWebController:
 
     def _wrap_handler(self, handler: Callable[[], Awaitable]) -> Callable[[], Awaitable]:
         async def wrapped():
-            self._check_quart_available()
             try:
                 return await handler()
             except ValueError as exc:
-                return self._jsonify({"ok": False, "message": str(exc)}), 400
+                return self._fail(str(exc), 400)
             except Exception as exc:
                 logger.exception("QQAdmin page request failed")
-                return self._jsonify({"ok": False, "message": str(exc)}), 500
+                return self._fail(str(exc), 500)
 
         wrapped.__name__ = handler.__name__
         return wrapped
@@ -185,7 +215,7 @@ class QQAdminWebController:
         return self._jsonify({"ok": True, "data": await self.service.get_bootstrap_payload()})
 
     async def page_refresh_groups(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
+        payload = await self._json_body()
         with_details = self._parse_flag(payload, "details", True)
         data = await self.service.list_groups_with_status(force=True, with_details=with_details)
         return self._jsonify({"ok": True, "data": data})
@@ -194,15 +224,15 @@ class QQAdminWebController:
         return self._jsonify({"ok": True, "data": await self.service.calibrate_groups()})
 
     async def page_refresh_group_roles(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
+        payload = await self._json_body()
         force = self._parse_flag(payload, "force", False)
         prune = self._parse_flag(payload, "prune", True)
         return self._jsonify({"ok": True, "data": await self.service.list_groups_with_bot_roles(force, prune)})
 
     async def page_get_group(self):
-        request = self._request()
-        group_id = request.args.get("group_id", "")
-        force = self._parse_flag(request.args, "force", False)
+        query = self._query()
+        group_id = str(query.get("group_id", ""))
+        force = self._parse_flag(query, "force", False)
         return self._jsonify(
             {
                 "ok": True,
@@ -211,14 +241,14 @@ class QQAdminWebController:
         )
 
     async def page_update_group(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
+        payload = await self._json_body()
         group_id = payload.get("group_id")
         config = payload.get("config")
         result = await self.service.update_group_config(group_id, config)
         return self._jsonify({"ok": True, "message": "Group config saved", "data": result})
 
     async def page_reset_group(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
+        payload = await self._json_body()
         group_id = payload.get("group_id")
         result = await self.service.reset_group_config(group_id)
         return self._jsonify({"ok": True, "message": "Group config reset", "data": result})
@@ -228,7 +258,7 @@ class QQAdminWebController:
         return self._jsonify({"ok": True, "data": data})
 
     async def page_update_global_list(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
+        payload = await self._json_body()
         list_type = payload.get("type", "")
         items = payload.get("items", [])
         result = await self.service.update_global_list(list_type, items)
@@ -238,15 +268,39 @@ class QQAdminWebController:
         return self._jsonify({"ok": True, "data": await self.service.get_global_ban_words()})
 
     async def page_update_global_ban_words(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
+        payload = await self._json_body()
         words = await self.service.update_global_ban_words(payload.get("words", []))
         return self._jsonify({"ok": True, "message": "全局禁词已更新", "data": words})
 
     async def page_import_builtin_ban_words(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
+        payload = await self._json_body()
         words = await self.service.import_builtin_ban_words(payload.get("words", []))
         return self._jsonify({"ok": True, "message": "内置禁词已导入", "data": words})
 
     async def page_restore_builtin_ban_words(self):
         words = await self.service.restore_builtin_ban_words()
         return self._jsonify({"ok": True, "message": "已恢复内置禁词", "data": words})
+
+    async def page_get_pending(self):
+        query = self._query()
+        gid = str(query.get("group_id", "") or "").strip() or None
+        return self._jsonify({"ok": True, "data": await self.service.list_pending_approvals(gid)})
+
+    async def page_drop_pending_entry(self):
+        payload = await self._json_body()
+        count = await self.service.drop_pending_entry(str(payload.get("key", "")))
+        return self._jsonify({"ok": True, "message": f"已清除 {count} 条待审核", "data": {"cleared": count}})
+
+    async def page_drop_pending_stale(self):
+        count = await self.service.drop_pending_stale()
+        return self._jsonify({"ok": True, "message": f"已清除 {count} 条过期待审核", "data": {"cleared": count}})
+
+    async def page_approve_pending(self):
+        payload = await self._json_body()
+        message = await self.service.settle_pending(str(payload.get("key", "")), True)
+        return self._jsonify({"ok": True, "message": message})
+
+    async def page_reject_pending(self):
+        payload = await self._json_body()
+        message = await self.service.settle_pending(str(payload.get("key", "")), False, str(payload.get("reason", "") or ""))
+        return self._jsonify({"ok": True, "message": message})

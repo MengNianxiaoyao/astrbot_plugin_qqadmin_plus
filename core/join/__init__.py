@@ -25,7 +25,7 @@ class JoinHandle:
         self.db = db
         self.global_list = global_list
         self._group_cache = group_cache
-        self.state = JoinState()
+        self.state = JoinState(config.data_dir)
         self.reviewer = JoinReviewer(db, global_list, group_cache, self.state)
         self.manager = JoinManager(db, global_list)
         self.approver = JoinApprover(self.state)
@@ -50,6 +50,12 @@ class JoinHandle:
 
     async def handle_join_full_msg(self, event: AiocqhttpMessageEvent):
         await self.manager.handle_join_full_msg(event)
+
+    async def handle_join_pending_msg(self, event: AiocqhttpMessageEvent):
+        await self.manager.handle_join_pending_msg(event)
+
+    async def handle_join_pending_ttl(self, event: AiocqhttpMessageEvent, days: int | None):
+        await self.manager.handle_join_pending_ttl(event, days)
 
     async def handle_join_min_level(self, event: AiocqhttpMessageEvent, level: int | None):
         await self.manager.handle_join_min_level(event, level)

@@ -13,7 +13,7 @@ from .decision import (
     GroupJoinSnapshot,
     decide,
 )
-from .state import JoinState
+from .state import PENDING_DEFAULT_DAYS, JoinState, pending_ttl_secs
 
 
 class JoinReviewer:
@@ -31,8 +31,9 @@ class JoinReviewer:
         self._group_cache = group_cache
         self.state = state
 
-    async def _is_group_full(self, gid: str, client=None) -> bool:
-        """群人数是否已满。无法获取到有效人数时返回 False（放行，走正常审核流程）。"""
+    async def _group_counts(self, gid: str, client=None) -> tuple[int, int] | None:
+        """群（现有人数, 上限）。必须实时直查 OneBot 接口，不用群缓存（待审核名额差一两人都不能错）。
+        拿不到有效人数时返回 None（调用方按放行处理）。"""
 
         def _counts(info: dict | None) -> tuple[int, int] | None:
             if not isinstance(info, dict):
@@ -50,36 +51,60 @@ class JoinReviewer:
                 return None
             return member_count, max_count
 
-        # 1. 优先用群缓存（强制刷新拿到最新人数）
-        if self._group_cache:
+        # 实时直查 OneBot 接口（带 no_cache，避免实现端缓存）
+        if client is None:
+            return None
+        try:
+            info = None
+            if hasattr(client, "get_group_info"):
+                try:
+                    info = await client.get_group_info(group_id=int(gid), no_cache=True)
+                except TypeError:
+                    info = await client.get_group_info(group_id=int(gid))
+            elif hasattr(client, "call_action"):
+                info = await client.call_action("get_group_info", group_id=int(gid), no_cache=True)
+            counts = _counts(info if isinstance(info, dict) else None)
+            if counts:
+                return counts
+        except Exception as e:
+            logger.debug(f"获取群 {gid} 人数失败，跳过满群检查: {e}")
+
+        return None
+
+    async def _reconcile_pending_by_membership(self, gid: str, client, ttl: float) -> int:
+        """按成员关系对账：待定者若已在群里（站外批准但事件漏掉），清掉其登记。
+        探测失败按“不在群里”处理，只清确定已进群的。返回清除条数。"""
+        if client is None:
+            return 0
+        uids: list[str] = []
+        for _, r in self.state.fresh_entries(gid, ttl=ttl):
+            uid = str(r.get("uid") or "")
+            if uid and uid not in uids:
+                uids.append(uid)
+        if not uids:
+            return 0
+
+        async def _is_member(uid: str) -> str | None:
             try:
-                group = await self._group_cache.get_group(gid, force=True)
-                counts = _counts(group)
-                if counts:
-                    member_count, max_count = counts
-                    return member_count >= max_count
+                try:
+                    info = await asyncio.wait_for(
+                        client.get_group_member_info(group_id=int(gid), user_id=int(uid), no_cache=True),
+                        timeout=10,
+                    )
+                except TypeError:
+                    info = await asyncio.wait_for(
+                        client.get_group_member_info(group_id=int(gid), user_id=int(uid)),
+                        timeout=10,
+                    )
             except Exception:
-                pass
+                return None
+            return uid if info else None
 
-        # 2. 兜底直查 OneBot 接口
-        if client is not None:
-            try:
-                info = None
-                if hasattr(client, "get_group_info"):
-                    try:
-                        info = await client.get_group_info(group_id=int(gid))
-                    except TypeError:
-                        info = await client.get_group_info(group_id=int(gid), no_cache=True)
-                elif hasattr(client, "call_action"):
-                    info = await client.call_action("get_group_info", group_id=int(gid))
-                counts = _counts(info if isinstance(info, dict) else None)
-                if counts:
-                    member_count, max_count = counts
-                    return member_count >= max_count
-            except Exception as e:
-                logger.debug(f"获取群 {gid} 人数失败，跳过满群检查: {e}")
-
-        return False
+        cleared = 0
+        for uid in await asyncio.gather(*[_is_member(u) for u in uids]):
+            if uid:
+                cleared += self.state.drop_pending(lambda k, r: r.get("gid") == gid and r.get("uid") == uid)
+        return cleared
 
     async def _find_other_group(self, gid: str, uid: str, client=None) -> str | None:
         """检查用户是否已在同账号管理的其他群中，返回群名，否返回 None。"""
@@ -136,10 +161,22 @@ class JoinReviewer:
         other = await self._find_other_group(gid, uid, client) if single_group else None
         earlier = self.state.find_earlier_application(uid, gid) if single_group and not other else None
         max_fail = await self.db.get(gid, "join_max_time", 3)
+        counts = await self._group_counts(gid, client) if full_reject else None
+        slots_left = counts[1] - counts[0] if counts else None
+        pending_ttl = pending_ttl_secs(await self.db.get(gid, "join_pending_ttl", PENDING_DEFAULT_DAYS))
+        pending_count = len(self.state.fresh_entries(gid, ttl=pending_ttl))
+        if full_reject and slots_left is not None and pending_count + 1 > slots_left and client is not None:
+            # 真要超限驳回前先对账：把已在群里的待定者清掉重算，避免站外批准漏事件导致误拦。
+            # 平时不触发，本次申请零额外开销。
+            await self._reconcile_pending_by_membership(gid, client, pending_ttl)
+            pending_count = len(self.state.fresh_entries(gid, ttl=pending_ttl))
         return GroupJoinSnapshot(
             join_full_reject=full_reject,
             join_full_msg=await self.db.get(gid, "join_full_msg", "群人数已满"),
-            is_full=await self._is_group_full(gid, client) if full_reject else False,
+            is_full=counts is not None and counts[0] >= counts[1],
+            join_pending_msg=await self.db.get(gid, "join_pending_msg", "待审核人数已超过剩余名额"),
+            slots_left=counts[1] - counts[0] if counts else None,
+            pending_count=pending_count,
             join_single_group=single_group,
             other_group=other,
             earlier_group=earlier,
@@ -170,7 +207,7 @@ class JoinReviewer:
         代号：full群满 / allow白名单 / block黑名单 / multi_group多群加入
         / level_hidden等级隐藏 / level_low等级过低 / empty_msg验证为空 / black_word命中黑词
         / black_word_block命中黑词已拉黑 / white_word命中白词
-        / max_fail超次已拉黑 / no_match未命中驳回 / manual人工审核
+        / max_fail超次已拉黑 / no_match未命中驳回 / pending_full待审核超限 / manual人工审核
         """
         snapshot = await self._load_snapshot(gid, uid, client)
         decision = decide(snapshot, Applicant(uid, comment, user_level), time.time())

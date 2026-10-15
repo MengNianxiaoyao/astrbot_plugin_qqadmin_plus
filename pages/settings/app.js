@@ -9,7 +9,7 @@ import {
 } from "./group-view.js";
 import { createThemeController } from "./theme.js";
 
-const bridge = window.AstrBotPluginPage;
+const bridge = window.AstrBotPluginView || window.AstrBotPluginPage;
 const DEFAULT_GROUP_ID = "__default__";
 const COLLAPSED_GROUP_OBJECT_PATHS = new Set(["perms"]);
 const EXPANDED_GROUP_OBJECT_PATHS = new Set(["vote_ban"]);
@@ -56,11 +56,16 @@ const els = {
   deleteSelectedBanWordsBtn: document.getElementById("deleteSelectedBanWordsBtn"),
   restoreBuiltinBanWordsBtn: document.getElementById("restoreBuiltinBanWordsBtn"),
   importSelectedBanWordsBtn: document.getElementById("importSelectedBanWordsBtn"),
+  pendingPanel: document.getElementById("pendingPanel"),
+  pendingDisplay: document.getElementById("pendingDisplay"),
+  refreshPendingBtn: document.getElementById("refreshPendingBtn"),
+  clearStalePendingBtn: document.getElementById("clearStalePendingBtn"),
   groupListPanel: document.getElementById("groupListPanel"),
   groupSearchWrap: document.getElementById("groupSearchWrap"),
   globalSidePanel: document.getElementById("globalSidePanel"),
   globalListSideActions: document.getElementById("globalListSideActions"),
   globalBanWordsSideActions: document.getElementById("globalBanWordsSideActions"),
+  pendingSideActions: document.getElementById("pendingSideActions"),
   workspaceGrid: document.querySelector(".workspace-grid"),
   viewTabs: document.querySelectorAll(".view-tab"),
   globalListTabs: document.querySelectorAll(".global-list-tab"),
@@ -71,6 +76,7 @@ let currentView = "group";
 let globalListKeyword = "";
 let globalListData = { allow: [], block: [] };
 let globalBanWordsData = { global: [], builtin: [] };
+let pendingData = [];
 
 function updateThemeButton() {
   if (els.toggleThemeBtn && themeController) {
@@ -444,33 +450,193 @@ function switchView(view) {
 }
 
 function updateGlobalSideActions() {
-  // 仅全局视图显示侧边栏操作按钮：黑白名单页签显示名单按钮，禁词页签显示禁词按钮
+  // 仅全局视图显示侧边栏操作按钮：黑白名单/禁词/待审核各页签显示各自按钮
   const isListTab = currentGlobalType === "allow" || currentGlobalType === "block";
   const isBanWordsTab = currentGlobalType === "ban-words";
+  const isPendingTab = currentGlobalType === "pending";
   els.globalListSideActions?.classList.toggle("is-hidden", currentView !== "global" || !isListTab);
   els.globalBanWordsSideActions?.classList.toggle("is-hidden", currentView !== "global" || !isBanWordsTab);
+  els.pendingSideActions?.classList.toggle("is-hidden", currentView !== "global" || !isPendingTab);
 }
 
 function switchGlobalTab(type) {
   const isBanWords = type === "ban-words";
+  const isPending = type === "pending";
   currentGlobalType = type;
-  const titles = { allow: "全局白名单", block: "全局黑名单", "ban-words": "全局禁词" };
+  const titles = { allow: "全局白名单", block: "全局黑名单", "ban-words": "全局禁词", pending: "待审核队列" };
   els.currentGroupName.textContent = titles[type] || "全局配置";
   if (els.currentGroupMeta) {
     els.currentGroupMeta.textContent = "";
   }
-  els.globalListContent.classList.toggle("is-hidden", isBanWords);
+  els.globalListContent.classList.toggle("is-hidden", isBanWords || isPending);
   els.globalBanWordsPanel.classList.toggle("is-hidden", !isBanWords);
+  els.pendingPanel.classList.toggle("is-hidden", !isPending);
   updateGlobalSideActions();
   // 切换页签时清空名单搜索
   globalListKeyword = "";
   if (els.globalListSearchInput) {
     els.globalListSearchInput.value = "";
   }
-  if (isBanWords) {
+  if (isPending) {
+    loadPendingApprovals();
+  } else if (isBanWords) {
     loadGlobalBanWords();
   } else {
     loadGlobalLists();
+  }
+}
+
+function formatPendingTime(ts) {
+  const millis = Number(ts) * 1000;
+  if (!Number.isFinite(millis) || millis <= 0) {
+    return "未知时间";
+  }
+  return new Date(millis).toLocaleString();
+}
+
+async function loadPendingApprovals() {
+  try {
+    pendingData = await api.safeGet("settings/pending");
+    renderPendingApprovals();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+function pendingActionButton(action, key, text, className) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = className;
+  btn.textContent = text;
+  btn.dataset.pendingKey = key;
+  btn.dataset.pendingAction = action;
+  return btn;
+}
+
+function renderPendingApprovals() {
+  const container = els.pendingDisplay;
+  container.innerHTML = "";
+
+  const count = document.createElement("div");
+  count.className = "global-list-count";
+  count.textContent = `共 ${pendingData.length} 条`;
+  container.appendChild(count);
+
+  const body = document.createElement("div");
+  body.className = "global-list-scroll";
+  container.appendChild(body);
+
+  if (!pendingData.length) {
+    const empty = document.createElement("div");
+    empty.className = "global-list-empty";
+    empty.textContent = "当前没有待审核的进群申请。";
+    body.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "pending-cards";
+  pendingData.forEach((item) => {
+    const card = document.createElement("div");
+    card.className = "card pending-card";
+
+    const head = document.createElement("div");
+    head.className = "pending-card-head";
+    const group = document.createElement("span");
+    group.className = "pending-card-group";
+    group.textContent = item.group_name || item.gid;
+    head.appendChild(group);
+    if (!item.fresh) {
+      const badge = document.createElement("span");
+      badge.className = "soft-badge stale";
+      badge.textContent = "已过期";
+      head.appendChild(badge);
+    }
+    const time = document.createElement("span");
+    time.className = "pending-card-time";
+    time.textContent = formatPendingTime(item.ts);
+    head.appendChild(time);
+
+    const user = document.createElement("div");
+    user.className = "pending-card-user";
+    user.textContent = item.nickname || "未知昵称";
+    const qq = document.createElement("span");
+    qq.className = "qq";
+    qq.textContent = item.uid;
+    user.appendChild(qq);
+
+    const actions = document.createElement("div");
+    actions.className = "pending-card-actions";
+    actions.append(
+      pendingActionButton("approve", item.key, "批准", "primary-button"),
+      pendingActionButton("reject", item.key, "驳回", "ghost-button"),
+      pendingActionButton("drop", item.key, "清除", "global-list-row-del"),
+    );
+
+    card.appendChild(head);
+    card.appendChild(user);
+    const comment = (item.comment || "").trim();
+    if (comment) {
+      const commentBox = document.createElement("div");
+      commentBox.className = "pending-card-comment";
+      commentBox.textContent = comment;
+      card.appendChild(commentBox);
+    }
+    card.appendChild(actions);
+    list.appendChild(card);
+  });
+  body.appendChild(list);
+  // 事件委托：整表共用一个监听器，避免逐行绑定
+  list.addEventListener("click", (e) => {
+    const btn = e.target instanceof Element ? e.target.closest("[data-pending-action]") : null;
+    if (!btn || btn.disabled) {
+      return;
+    }
+    const { pendingKey, pendingAction } = btn.dataset;
+    if (pendingAction === "approve") {
+      settlePendingApproval(pendingKey, true, btn);
+    } else if (pendingAction === "reject") {
+      settlePendingApproval(pendingKey, false, btn);
+    } else if (pendingAction === "drop") {
+      dropPendingEntry(pendingKey);
+    }
+  });
+}
+
+async function settlePendingApproval(key, approve, btn) {
+  const action = approve ? "批准" : "驳回";
+  try {
+    if (btn) {
+      btn.disabled = true;
+    }
+    const result = await api.safePost(`settings/pending/${approve ? "approve" : "reject"}`, { key });
+    showToast(result.message || `已${action}`);
+    await loadPendingApprovals();
+  } catch (error) {
+    showToast(error.message, "error");
+    if (btn) {
+      btn.disabled = false;
+    }
+  }
+}
+
+async function dropPendingEntry(key) {
+  try {
+    const result = await api.safePost("settings/pending/drop", { key });
+    showToast(`已清除 ${result.cleared ?? 0} 条`);
+    await loadPendingApprovals();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function clearStalePending() {
+  try {
+    const result = await api.safePost("settings/pending/drop-stale", {});
+    showToast(`已清除 ${result.cleared ?? 0} 条过期`);
+    await loadPendingApprovals();
+  } catch (error) {
+    showToast(error.message, "error");
   }
 }
 
@@ -964,6 +1130,20 @@ function bindEvents() {
   els.deleteSelectedBanWordsBtn.addEventListener("click", removeSelectedGlobalBanWords);
   els.restoreBuiltinBanWordsBtn.addEventListener("click", restoreBuiltinBanWords);
   els.importSelectedBanWordsBtn.addEventListener("click", importSelectedBanWords);
+  els.refreshPendingBtn.addEventListener("click", async () => {
+    try {
+      await loadPendingApprovals();
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
+  els.clearStalePendingBtn.addEventListener("click", async () => {
+    try {
+      await clearStalePending();
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
 }
 
 async function init() {
@@ -973,7 +1153,8 @@ async function init() {
   });
   themeController.bind();
   updateThemeButton();
-  themeController.sync(null);
+  // SDK 可能已内联注入初始 context（含 isDark）：有就直接用，别拿空值覆盖 SDK 写好的主题。
+  themeController.sync(bridge?.getContext?.() ?? null);
 
   if (!bridge) {
     return;

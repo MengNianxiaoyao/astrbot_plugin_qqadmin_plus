@@ -64,7 +64,7 @@ class QQAdminPlugin(Star):
         self.member = MemberHandle(self.db, self.global_list, self.text_to_image)
         self.file = FileHandle(self.cfg)
         self.curfew = CurfewHandle(self.context, self.cfg)
-        self.web = QQAdminWebController(context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro)
+        self.web = QQAdminWebController(context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro, self.join.state)
         self.web.register_routes()
 
     async def initialize(self):
@@ -383,6 +383,18 @@ class QQAdminPlugin(Star):
     async def handle_join_full_msg(self, event: AiocqhttpMessageEvent):
         "群满文案 <拒绝理由>"
         await self.join.handle_join_full_msg(event)
+
+    @filter.command("待审核文案")
+    @perm_required_for("handle_join_pending_msg")
+    async def handle_join_pending_msg(self, event: AiocqhttpMessageEvent):
+        "待审核文案 <拒绝理由>，待审核申请超过剩余名额时驳回新申请的理由"
+        await self.join.handle_join_pending_msg(event)
+
+    @filter.command("待审核有效期")
+    @perm_required_for("handle_join_pending_ttl")
+    async def handle_join_pending_ttl(self, event: AiocqhttpMessageEvent, days: int | None = None):
+        "待审核有效期 <天数>，待审核申请保留天数（至少1天，无参数查看）"
+        await self.join.handle_join_pending_ttl(event, days)
 
     @filter.command("进群等级")
     @perm_required_for("handle_join_min_level")

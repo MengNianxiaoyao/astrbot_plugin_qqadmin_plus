@@ -37,6 +37,7 @@
                     <button class="global-list-tab is-active" data-global-type="allow" role="tab" aria-selected="true">白名单</button>
                     <button class="global-list-tab" data-global-type="block" role="tab" aria-selected="false">黑名单</button>
                     <button class="global-list-tab" data-global-type="ban-words" role="tab" aria-selected="false">全局禁词</button>
+                    <button class="global-list-tab" data-global-type="pending" role="tab" aria-selected="false">待审核</button>
                 </div>
             </div>
             <div class="sidebar-foot">
@@ -54,6 +55,10 @@
             <div class="sidebar-foot is-hidden" id="globalBanWordsSideActions">
                 <button class="ghost-button" id="appendGlobalBanWordsBtn">添加保存</button>
                 <button class="primary-button" id="overwriteGlobalBanWordsBtn">覆写保存</button>
+            </div>
+            <div class="sidebar-foot is-hidden" id="pendingSideActions">
+                <button class="ghost-button" id="refreshPendingBtn">刷新队列</button>
+                <button class="primary-button" id="clearStalePendingBtn">清除过期</button>
             </div>
         </aside>
 
@@ -118,13 +123,24 @@
                                     <div id="builtinBanWordsDisplay" class="global-list-display"></div>
                                 </div>
                             </div>
-                            <div class="card batch-card">
-                                <div class="field batch-field">
-                                    <div class="field-label">添加禁词（支持批量）</div>
-                                    <div class="field-control">
-                                        <textarea id="globalBanWordsBatchInput" placeholder="每行一个禁词"></textarea>
+                            <div class="field batch-field">
+                                <div class="field-label">添加禁词（支持批量）</div>
+                                <div class="field-control">
+                                    <textarea id="globalBanWordsBatchInput" placeholder="每行一个禁词"></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="pendingPanel" class="is-hidden">
+                            <div class="card global-ban-words-section">
+                                <div class="ban-word-panel-header">
+                                    <div>
+                                        <div class="field-label">待审核队列</div>
+                                        <div class="field-hint">批准/驳回直调 QQ 侧申请；清除只删本机登记，不触达 QQ 侧。</div>
+                                        <div class="field-hint">申请人入群后自动删除记录（包含 QQ 侧处理）。</div>
                                     </div>
                                 </div>
+                                <div id="pendingDisplay" class="global-list-display"></div>
                             </div>
                         </div>
                     </div>

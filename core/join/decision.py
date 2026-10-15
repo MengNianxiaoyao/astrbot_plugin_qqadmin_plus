@@ -22,6 +22,11 @@ class GroupJoinSnapshot:
     join_full_reject: bool = True
     join_full_msg: str = "群人数已满"
     is_full: bool = False
+    # 待审核：剩余名额（None=未知则不检查）与本群待人工审核数（不含当前申请人）。
+    # 仅 join_full_reject 开启时生效；先到者不受影响，超额的新申请在转人工前驳回。
+    join_pending_msg: str = "待审核人数已超过剩余名额"
+    slots_left: int | None = None
+    pending_count: int = 0
     join_single_group: bool = False
     other_group: str | None = None
     earlier_group: str | None = None
@@ -119,5 +124,8 @@ def decide(snapshot: GroupJoinSnapshot, applicant: Applicant, now: float) -> Dec
     if snapshot.join_no_match_reject:
         return Decision(False, "未命中进群关键词", "no_match", count_effect)
 
-    # 7.人工审核
+    # 7.人工审核：先看待审核是否超额（只拦新来者，已待定的不受影响；
+    #    待审核驳回不计入失败次数，避免拥挤时段误伤拉黑）
+    if snapshot.join_full_reject and snapshot.slots_left is not None and snapshot.pending_count + 1 > snapshot.slots_left:
+        return Decision(False, snapshot.join_pending_msg or "待审核人数已超过剩余名额", "pending_full")
     return Decision(None, "人工审核", "manual", count_effect)

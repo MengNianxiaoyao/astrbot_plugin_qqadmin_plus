@@ -43,10 +43,10 @@ class JoinApprover:
         flag = None
         pending_entry = None
 
-        # A2：按被引用消息ID精确匹配已登记的通知
+        # A2：按被引用消息ID精确匹配已登记的通知（只查看不取出，落定成功后按 flag 统一清）
         reply_id = get_replyer_message_id(event)
         if reply_id:
-            pending_entry = self.state.pending.pop(reply_id, None)
+            pending_entry = self.state.pending.get(reply_id)
             if pending_entry:
                 flag = pending_entry["flag"]
                 nickname = pending_entry["nickname"]
@@ -66,8 +66,9 @@ class JoinApprover:
         nickname = nickname or "该用户"
         try:
             await event.bot.set_group_add_request(flag=flag, sub_type="add", approve=approve, reason=extra)
-            # 人工落定后清除跨群申请记录
+            # 人工落定后清除跨群申请记录与待审批登记（引用/兜底路径统一按 flag 清）
             self.state.drop_application_by_flag(flag)
+            self.state.drop_pending(lambda k, r: r.get("flag") == flag)
             if approve:
                 reply = f"已同意{nickname}进群"
             else:
@@ -75,10 +76,12 @@ class JoinApprover:
             return reply
         except Exception as e:
             logger.error(f"处理进群申请失败: {e}")
-            if reply_id and pending_entry is not None:
-                # 失败可重试：恢复已取出的登记记录
-                self.state.pending[reply_id] = pending_entry
-            return self._approve_fail_hint(e)
+            hint = self._approve_fail_hint(e)
+            err = str(e).lower()
+            if "already agree" in err or "already refuse" in err or "already disagree" in err:
+                # 站外已处理：登记已无意义，按 flag 对账，避免待审核计数占位
+                self.state.drop_pending(lambda k, r: r.get("flag") == flag)
+            return hint
 
     async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         """批准进群申请"""

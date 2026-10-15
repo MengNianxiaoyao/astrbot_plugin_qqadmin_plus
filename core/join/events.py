@@ -73,6 +73,9 @@ class JoinEvents:
         # 进群申请事件
         if raw.get("post_type") == "request" and raw.get("request_type") == "group" and raw.get("sub_type") == "add":
             await self._on_join_request(event, raw, gid, uid, client)
+        elif raw.get("post_type") == "request" and raw.get("request_type") == "group":
+            # 非加群申请（如邀请入群）：本插件只处理主动申请
+            logger.debug(f"忽略非主动加群请求: gid={gid} uid={uid} sub_type={raw.get('sub_type')}")
         # 主动退群事件
         elif raw.get("post_type") == "notice" and raw.get("notice_type") == "group_decrease" and raw.get("sub_type") == "leave":
             await self._on_leave(event, gid, uid)
@@ -83,6 +86,7 @@ class JoinEvents:
     async def _on_join_request(self, event: AiocqhttpMessageEvent, raw: dict, gid: str, uid: str, client):
         # 进群审核总开关
         if not await self.db.get(gid, "join_switch"):
+            logger.debug(f"进群审核未开启，跳过: gid={gid} uid={uid}")
             return
         comment = raw.get("comment")
         flag = raw.get("flag", "")
@@ -97,6 +101,7 @@ class JoinEvents:
 
         # 判断是否通过（满群时直接拒绝，白名单也不放行）
         approve, reason, code = await self.reviewer.should_approve(gid, uid, comment, level, client=client)
+        logger.debug(f"进群判定: gid={gid} uid={uid} approve={approve} code={code} reason={reason}")
         # 清理缓存
         if approve is True:
             self.state.clear_fail(f"{gid}_{uid}")
@@ -116,7 +121,7 @@ class JoinEvents:
                 silent = await self.db.get(
                     gid,
                     "join_silent_reasons",
-                    ["full", "allow", "white_word", "block", "empty_msg"],
+                    ["full", "pending_full", "allow", "white_word", "block", "empty_msg"],
                 )
                 silent = set(silent or [])
                 if code in silent:
@@ -148,7 +153,11 @@ class JoinEvents:
             if mid:
                 sent_ids.append(mid)
         for mid in sent_ids:
-            self.state.track_pending(mid, gid, uid, nickname, flag)
+            try:
+                platform_id = event.get_platform_id()
+            except Exception:
+                platform_id = None
+            self.state.track_pending(mid, gid, uid, nickname, flag, platform_id, comment if isinstance(comment, str) else None)
 
     async def _on_leave(self, event: AiocqhttpMessageEvent, gid: str, uid: str):
         should_block = await self.db.get(gid, "leave_block", False)
@@ -170,6 +179,8 @@ class JoinEvents:
             await event.send(event.plain_result(msg))
 
     async def _on_increase(self, event: AiocqhttpMessageEvent, gid: str, uid: str, client):
+        # 有人进群（含站外直接审批）：对账清除其待审批登记，待审核计数不再占位
+        self.state.drop_pending(lambda k, r: r.get("gid") == gid and r.get("uid") == uid)
         # 进群欢迎
         join_welcome = await self.db.get(gid, "join_welcome")
         if join_welcome:

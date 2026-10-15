@@ -203,6 +203,18 @@ textarea {
     gap: 8px;
 }
 
+/* 待审核操作区纵向两等分 */
+#pendingSideActions {
+    flex-direction: column;
+    flex-wrap: nowrap;
+}
+
+#pendingSideActions .ghost-button,
+#pendingSideActions .primary-button {
+    flex: none;
+    width: 100%;
+}
+
 .sidebar-foot .ghost-button,
 .sidebar-foot .primary-button {
     flex: 1;
@@ -410,6 +422,7 @@ textarea {
     flex-direction: column;
     gap: 14px;
     max-width: 960px;
+    min-height: 100%;
 }
 
 .card {
@@ -791,8 +804,8 @@ textarea {
 }
 
 #globalListContent .list-card {
-    flex: 1 1 auto;
-    min-height: 0;
+    flex: none;
+    height: 560px;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -801,10 +814,11 @@ textarea {
 }
 
 #globalListContent .list-card .global-list-display {
-    flex: none;
-    height: 480px;
-    max-height: 480px;
-    min-height: 0;
+    /* 与禁词表格等高：不写死像素，弹性填满吸收 header 高度差 */
+    flex: 1;
+    height: auto;
+    max-height: none;
+    min-height: 300px;
     margin-bottom: 0;
     overflow: hidden;
 }
@@ -843,35 +857,30 @@ textarea {
 }
 
 #globalListContent .batch-field,
-.batch-card .batch-field {
+#globalBanWordsPanel > .batch-field {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     margin: 0;
 }
 
-#globalListContent .batch-field {
+#globalListContent .batch-field,
+#globalBanWordsPanel > .batch-field {
     flex: 0 0 auto;
     height: 220px;
     border-radius: var(--radius);
     box-shadow: var(--shadow);
 }
 
-.batch-card .batch-field {
-    height: 190px;
-    border: 0;
-    padding: 0;
-}
-
 #globalListContent .batch-field .field-control,
-.batch-card .batch-field .field-control {
+#globalBanWordsPanel > .batch-field .field-control {
     flex: 1;
     min-height: 0;
     display: flex;
 }
 
 #globalListBatchInput,
-.batch-card .batch-field textarea {
+#globalBanWordsPanel > .batch-field textarea {
     flex: 1;
     min-height: 0;
     width: 100%;
@@ -932,6 +941,108 @@ textarea {
     background: var(--danger-soft);
 }
 
+/* ============ 待审核卡片 ============ */
+
+.pending-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* 四页签锁死等高：列表卡/禁词双栏 560 + 间隙 14 + 添加区 220；
+   待审核无添加区，整卡 560+14+220=794；内部显示区弹性吸收 header 高度差 */
+#globalBanWordsPanel .ban-word-panels {
+    flex: none;
+    height: 560px;
+}
+
+#globalBanWordsPanel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+#pendingPanel > .card {
+    flex: none;
+    height: 794px;
+    display: flex;
+    flex-direction: column;
+}
+
+#pendingPanel .global-list-scroll {
+    flex: 1;
+    min-height: 0;
+}
+
+.pending-card {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.pending-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pending-card-group {
+    font-weight: 700;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pending-card-time {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.soft-badge.stale {
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+.pending-card-user {
+    font-size: 14px;
+}
+
+.pending-card-user .qq {
+    color: var(--muted);
+    font-size: 12px;
+    margin-left: 6px;
+}
+
+.pending-card-comment {
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+}
+
+.pending-card-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.pending-card-actions .primary-button,
+.pending-card-actions .ghost-button,
+.pending-card-actions .global-list-row-del {
+    padding: 4px 16px;
+    font-size: 13px;
+}
+
 .ban-word-panels {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -947,18 +1058,22 @@ textarea {
 
 .builtin-ban-words-section .global-list-display,
 .global-ban-words-section .global-list-display {
-    height: 430px;
-    max-height: 430px;
+    flex: 1;
+    height: auto;
+    max-height: none;
+    min-height: 0;
     overflow: hidden;
-}
-
-.batch-card {
-    margin-top: 14px;
 }
 
 @media (max-width: 1100px) {
     .ban-word-panels {
         grid-template-columns: 1fr;
+    }
+    /* 窄屏堆叠后取消锁死高度，自然撑高 */
+    #globalListContent .list-card,
+    .ban-word-panels,
+    #pendingPanel > .card {
+        height: auto;
     }
 }
 
@@ -1243,6 +1358,18 @@ textarea {
 
     .card {
         padding: 14px;
+    }
+
+    /* 移动端添加区提到列表上方 */
+    #globalBanWordsPanel {
+        display: flex;
+        flex-direction: column;
+    }
+
+    #globalListContent .batch-field,
+    #globalBanWordsPanel > .batch-field {
+        order: -1;
+        margin-bottom: 14px;
     }
 
     .field {

@@ -10,6 +10,8 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ...config import PluginConfig
 from ...data import QQAdminDB
+from ...permission.levels import PermLevel
+from ...permission.manager import perm_manager
 from ...utils import get_ats, get_nickname
 
 
@@ -19,7 +21,7 @@ class VoteSession:
     def __init__(self, config: PluginConfig, db: QQAdminDB):
         self.cfg = config
         self.db = db
-        # 记录投票 {group_id: {"target": target_id, "votes": {user_id: bool}, "expire": timestamp, "threshold": threshold,}}
+        # 记录投票 {group_id: {"target": target_id, "starter": starter_id, "votes": {user_id: bool}, "expire": timestamp, "threshold": threshold,}}
         self.vote_cache: dict[str, dict] = {}
 
     @staticmethod
@@ -28,6 +30,13 @@ class VoteSession:
         if kind == "kick":
             return "踢出投票", "踢出"
         return "禁言投票", "禁言"
+
+    @staticmethod
+    def _tally(record: dict) -> tuple[int, int]:
+        """计数唯一出口：返回 (赞同数, 反对数)。"""
+        votes = list(record["votes"].values())
+        agree_count = sum(votes)
+        return agree_count, len(votes) - agree_count
 
     async def _punish(self, bot_client, gid_int: int, record: dict):
         """执行投票通过的处罚（禁言/踢出）；失败抛异常由调用方处理。"""
@@ -50,9 +59,7 @@ class VoteSession:
         current = self.vote_cache.get(group_id)
         if current is not record:
             return  # 已被提前结算或取消
-        votes = list(record["votes"].values())
-        agree_count = sum(votes)
-        disagree_count = len(votes) - agree_count
+        agree_count, disagree_count = self._tally(record)
         _, action = self._vote_label(record.get("kind", "mute"))
         try:
             nickname2 = await get_nickname(event, record["target"])
@@ -118,6 +125,7 @@ class VoteSession:
         record = {
             "kind": kind,
             "target": target_id,
+            "starter": str(event.get_sender_id()),
             "votes": {},
             "ban_time": ban_time if kind == "mute" else 0,
             "expire": expire_at,
@@ -127,20 +135,25 @@ class VoteSession:
 
         nickname = await get_nickname(event, target_id)
         if kind == "kick":
-            start_msg = f"已发起对 {nickname} 的踢出投票，输入“赞同踢人/反对踢人”进行表态，{ttl}秒后结算"
+            start_msg = f"已发起对 {nickname} 的踢出投票，输入“【/赞同踢人】或【/反对踢人】”进行表态\n赞同满{threshold}票直接通过，{ttl}秒后结算（仅发起人/管理员可取消投票）"
         else:
-            start_msg = f"已发起对 {nickname} 的{vote_name}(禁言{ban_time}秒)，输入“赞同禁言/反对禁言”进行表态，{ttl}秒后结算"
+            start_msg = f"已发起对 {nickname} 的{vote_name}(禁言{ban_time}秒)，输入“【/赞同禁言】或【/反对禁言】”进行表态\n赞同满{threshold}票直接通过，{ttl}秒后结算（仅发起人/管理员可取消投票）"
         await event.send(event.plain_result(start_msg))
 
         asyncio.create_task(self._settle_vote(group_id, gid_int, bot_client, event, record, ttl))
 
     async def cancel_vote_mute(self, event: AiocqhttpMessageEvent):
-        """取消当前群正在进行的投票（权限由装饰器校验）；结算任务醒来后见记录已消失会自动退出"""
+        """取消当前群正在进行的投票（仅发起人/管理员；权限由装饰器校验）；结算任务醒来后见记录已消失会自动退出"""
         group_id = event.get_group_id()
-        record = self.vote_cache.pop(group_id, None)
+        record = self.vote_cache.get(group_id)
         if not record:
             await event.send(event.plain_result("当前没有进行中的投票"))
             return
+        sender_id = str(event.get_sender_id())
+        if sender_id != str(record.get("starter")) and await perm_manager.get_perm_level(event, sender_id) > PermLevel.ADMIN:
+            await event.send(event.plain_result("仅投票发起人或管理员可取消投票"))
+            return
+        self.vote_cache.pop(group_id, None)
         vote_name, _ = self._vote_label(record.get("kind", "mute"))
         try:
             nickname = await get_nickname(event, record["target"])
@@ -163,14 +176,15 @@ class VoteSession:
 
         threshold = record["threshold"]
         target_id = record["target"]
+        if str(voter_id) == str(target_id):
+            await event.send(event.plain_result("被投票者不能参与表态"))
+            return
         _, action = self._vote_label(record.get("kind", "mute"))
 
         # 记录/更新该用户的立场
         record["votes"][voter_id] = agree
 
-        votes = list(record["votes"].values())
-        agree_count = sum(votes)
-        disagree_count = len(votes) - agree_count
+        agree_count, disagree_count = self._tally(record)
         nickname = await get_nickname(event, target_id)
 
         # 提前达成赞同阈值 → 立即执行

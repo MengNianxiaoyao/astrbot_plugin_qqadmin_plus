@@ -7,7 +7,7 @@ _✨ QQ群管插件 ✨_
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.24.2-orange.svg)](https://github.com/Soulter/AstrBot)
+[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.26.0-orange.svg)](https://github.com/Soulter/AstrBot)
 [![Original](https://img.shields.io/badge/Original-Zhalslar-blue.svg)](https://github.com/Zhalslar/astrbot_plugin_qqadmin)
 
 </div>
@@ -21,7 +21,7 @@ _✨ QQ群管插件 ✨_
 
 ## 📦 安装与环境
 
-- 要求：`AstrBot >= 4.24.2`，`Python 3.10+`，已接入 `aiocqhttp` 平台的 QQ 机器人。
+- 要求：`AstrBot >= 4.26.0`，`Python 3.10+`，已接入 `aiocqhttp` 平台的 QQ 机器人。
 - 安装：在 AstrBot 插件市场搜索 `astrbot_plugin_qqadmin_plus`，点击安装即可。
 - 数据目录：插件数据存放在 AstrBot 数据目录下的 `astrbot_plugin_qqadmin_plus/`（SQLite 群配置、全局黑白名单 JSON、全局禁词 JSON、宵禁 JSON、群文件缓存等）。
 
@@ -66,10 +66,10 @@ _✨ QQ群管插件 ✨_
 | （自动）违禁词检测 | 命中自定义禁词 / 全局禁词后自动撤回并禁言 | ❌ |
 | （自动）刷屏检测 | 短时间内连续发言触发自动禁言 | ❌ |
 | 投票禁言 <秒数> @用户 | 发起禁言投票 | ❌ |
-| 赞同禁言 / 反对禁言 | 对当前禁言投票表态，达到票数阈值或超时按多数结算 | ❌ |
+| 赞同禁言 / 反对禁言 | 对当前禁言投票表态，被投票者不可表态；达到票数阈值或超时按多数结算 | ❌ |
 | 投票踢人 @用户 | 发起踢人投票 | ❌ |
-| 赞同踢人 / 反对踢人 | 对当前踢人投票表态，达到票数阈值或超时按多数结算 | ❌ |
-| 取消投票 | 取消当前群正在进行的投票（禁言/踢人共用，一群同时只能有一场） | ❌ |
+| 赞同踢人 / 反对踢人 | 对当前踢人投票表态，被投票者不可表态；达到票数阈值或超时按多数结算 | ❌ |
+| 取消投票 | 取消当前群正在进行的投票（禁言/踢人共用，一群同时只能有一场；仅发起人/管理员） | ❌ |
 | 开启宵禁 HH:MM HH:MM | 设置宵禁时间段（到点自动全员禁言 / 解禁） | ❌ |
 | 关闭宵禁 | 关闭本群的宵禁任务 | ❌ |
 
@@ -83,6 +83,8 @@ _✨ QQ群管插件 ✨_
 | 未命中驳回 开/关 | 未命中白词是否自动驳回；无参数查看 | ❌ |
 | 群满拒绝 开/关 | 群人数已满时是否自动拒绝；无参数查看 | ❌ |
 | 群满文案 <拒绝理由> | 群满自动拒绝时展示的理由；无参数查看 | ❌ |
+| 待审核文案 <拒绝理由> | 待审核申请超过剩余名额时驳回新申请的理由（受群满拒绝开关控制）；无参数查看 | ❌ |
+| 待审核有效期 <天数> | 待审核申请保留天数，超期不再计入待审核数，至少 1 天；无参数查看 | ❌ |
 | 进群等级 <等级> | 等级门槛，`0` 不限制；无参数查看 | ❌ |
 | 进群次数 <次数> | 未命中关键词累计超次后拉黑，`0` 不限制；无参数查看 | ❌ |
 | 进群白名单 [+QQ/-QQ...] / 进群黑名单 [+QQ/-QQ...] | 无参数查看；`+QQ` / `-QQ` 增删；纯 QQ 列表覆写 | ❌ |
@@ -111,7 +113,7 @@ _✨ QQ群管插件 ✨_
 
 ### 前端面板说明
 
-在 AstrBot 管理后台插件页点击本插件 Logo 进入详情页，在插件行为/页面入口中“打开”，即可进入群管面板（`/api/astrbot_plugin_qqadmin_plus/settings/*`，由 Dashboard Token 鉴权）。
+在 AstrBot 管理后台插件页点击本插件 Logo 进入详情页，在插件行为/页面入口中打开“群管面板”，即可进入群管面板（插件可视化视图 `pages/settings`，前端经 bridge 调用后端 API，鉴权由 Dashboard 统一处理；`pages/` 目录可兼容 AstrBot 4.26–4.29）。
 
 #### 群配置
 
