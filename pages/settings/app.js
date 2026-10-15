@@ -65,6 +65,7 @@ const els = {
   globalSidePanel: document.getElementById("globalSidePanel"),
   globalListSideActions: document.getElementById("globalListSideActions"),
   globalBanWordsSideActions: document.getElementById("globalBanWordsSideActions"),
+  pendingSideActions: document.getElementById("pendingSideActions"),
   workspaceGrid: document.querySelector(".workspace-grid"),
   viewTabs: document.querySelectorAll(".view-tab"),
   globalListTabs: document.querySelectorAll(".global-list-tab"),
@@ -449,11 +450,13 @@ function switchView(view) {
 }
 
 function updateGlobalSideActions() {
-  // 仅全局视图显示侧边栏操作按钮：黑白名单页签显示名单按钮，禁词页签显示禁词按钮
+  // 仅全局视图显示侧边栏操作按钮：黑白名单/禁词/待审核各页签显示各自按钮
   const isListTab = currentGlobalType === "allow" || currentGlobalType === "block";
   const isBanWordsTab = currentGlobalType === "ban-words";
+  const isPendingTab = currentGlobalType === "pending";
   els.globalListSideActions?.classList.toggle("is-hidden", currentView !== "global" || !isListTab);
   els.globalBanWordsSideActions?.classList.toggle("is-hidden", currentView !== "global" || !isBanWordsTab);
+  els.pendingSideActions?.classList.toggle("is-hidden", currentView !== "global" || !isPendingTab);
 }
 
 function switchGlobalTab(type) {
