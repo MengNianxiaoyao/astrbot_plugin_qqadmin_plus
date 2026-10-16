@@ -107,17 +107,19 @@ export function renderGroupCards({
 
     const subline = document.createElement("div");
     subline.className = "group-card-subline";
+    const idSpan = document.createElement("span");
+    idSpan.className = "group-card-id";
+    const infoSpan = document.createElement("span");
     if (group.is_default_group) {
-      subline.innerHTML = `
-        <span class="group-card-id">默认模板</span>
-        <span>新群继承这里的配置</span>
-      `;
+      idSpan.textContent = "默认模板";
+      infoSpan.textContent = "新群继承这里的配置";
     } else {
-      const memberText = formatMemberText(group);
-      subline.innerHTML = `
-        <span class="group-card-id">${group.group_id}</span>
-        ${memberText ? `<span>${memberText}</span>` : ""}
-      `;
+      idSpan.textContent = String(group.group_id);
+      infoSpan.textContent = formatMemberText(group);
+    }
+    subline.appendChild(idSpan);
+    if (infoSpan.textContent) {
+      subline.appendChild(infoSpan);
     }
     main.appendChild(subline);
 

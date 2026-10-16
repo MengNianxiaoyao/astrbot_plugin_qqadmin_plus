@@ -167,7 +167,12 @@ class FileHandle:
         if seg and isinstance(seg, File | Image | Video):
             if url := getattr(seg, "url", None) or getattr(seg, "file", None):
                 logger.info(f"正在从URL下载文件：{url}")
-                file_path = self.data_dir / file_name
+                # 文件名可能源自用户输入：取 basename 并清洗，杜绝 '..' 路径穿越逃出 data_dir
+                safe_name = re.split(r"[\\/]", str(file_name))[-1].strip()
+                if not safe_name or safe_name in {".", ".."}:
+                    logger.error(f"非法文件名，已拒绝保存：{file_name}")
+                    return None
+                file_path = self.data_dir / safe_name
                 await download_file(url, file_path)
                 if await anyio.Path(file_path).exists():
                     return file_path
