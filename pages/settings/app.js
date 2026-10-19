@@ -498,8 +498,10 @@ async function loadPendingApprovals() {
   try {
     pendingData = await api.safeGet("settings/pending");
     renderPendingApprovals();
+    return pendingData;
   } catch (error) {
     showToast(error.message, "error");
+    return null;
   }
 }
 
@@ -1131,10 +1133,9 @@ function bindEvents() {
   els.restoreBuiltinBanWordsBtn.addEventListener("click", restoreBuiltinBanWords);
   els.importSelectedBanWordsBtn.addEventListener("click", importSelectedBanWords);
   els.refreshPendingBtn.addEventListener("click", async () => {
-    try {
-      await loadPendingApprovals();
-    } catch (error) {
-      showToast(error.message, "error");
+    const data = await loadPendingApprovals();
+    if (data) {
+      showToast(`待审核队列已刷新（共 ${data.length} 条）`);
     }
   });
   els.clearStalePendingBtn.addEventListener("click", async () => {
