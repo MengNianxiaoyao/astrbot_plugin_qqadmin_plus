@@ -61,7 +61,7 @@ class QQAdminPlugin(Star):
         self.notice = NoticeHandle(self.cfg)
         self.banpro = BanproHandle(self.cfg, self.db)
         self.join = JoinHandle(self.cfg, self.db, self.global_list, self.group_cache)
-        self.member = MemberHandle(self.db, self.global_list, self.text_to_image)
+        self.member = MemberHandle(self.db, self.global_list)
         self.file = FileHandle(self.cfg)
         self.curfew = CurfewHandle(self.context, self.cfg)
         self.web = QQAdminWebController(context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro, self.join.state)

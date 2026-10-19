@@ -1,7 +1,8 @@
-"""群友管理：信息展示（图片优先、失败分片文本兜底）与清理群友。
+"""群友管理：信息展示（长文本自动分片）与清理群友。
 
-清理流程：按“未发言天数 + 等级”筛候选 → 白名单跳过 → 图片/文本确认 →
+清理流程：按“未发言天数 + 等级”筛候选 → 白名单跳过 → 分片文本确认 →
 session_waiter 等“确认清理/取消清理” → 限流并发踢人。
+同一群同一时刻只允许一个清理任务（群级互斥锁），避免多个管理员重复踢同一批人。
 """
 
 import asyncio
@@ -16,199 +17,158 @@ from astrbot.core.utils.session_waiter import SessionController, session_waiter
 from ..data import QQAdminDB, QQAdminGlobalList
 from ..utils import format_time, get_nickname, resolve_allow_ids
 
-# 候选名单超过此行数时跳过图片渲染，直接走文本分片（大图渲染慢且易失败）
-CANDIDATE_IMAGE_MAX_ROWS = 100
 # 确认清理阶段并发踢人的最大并发数
 KICK_CONCURRENCY = 8
 
 
+def _safe_int(value, default: int = 0) -> int:
+    """尽力转 int，None/空串/非法值回 default"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class MemberHandle:
-    def __init__(self, db: QQAdminDB, global_list: QQAdminGlobalList, text_to_image):
+    def __init__(self, db: QQAdminDB, global_list: QQAdminGlobalList):
         self.db = db
         self.global_list = global_list
-        self.text_to_image = text_to_image
+        self._clear_locks: dict[str, asyncio.Lock] = {}
 
-    async def get_group_member_list(self, event: AiocqhttpMessageEvent):
-        """查看群友信息。优先生成图片展示，图片失败时自动降级为分片文本。"""
-        await event.send(event.plain_result("获取中..."))
-        group_id = event.get_group_id()
+    async def _fetch_members(self, event: AiocqhttpMessageEvent, group_id: str) -> list | None:
+        """拉取群成员列表，失败时回执并返回 None"""
         try:
-            members_data = await event.bot.get_group_member_list(group_id=int(group_id))
+            return await event.bot.get_group_member_list(group_id=int(group_id))
         except Exception as e:
             logger.error(f"获取群成员列表失败：{e}")
             await event.send(event.plain_result(f"获取群成员信息失败：{e}"))
-            return
+            return None
 
-        def _join_time(member):
-            try:
-                return int(member.get("join_time", 0) or 0)
-            except (TypeError, ValueError):
-                return 0
-
-        info_lines = [f"{format_time(_join_time(m))}：【{m.get('level', 0)}】{m.get('user_id', '?')}-{m.get('nickname', '（无昵称）')}" for m in sorted(members_data, key=_join_time)]
-
-        if not info_lines:
-            await event.send(event.plain_result("群内暂无成员数据"))
-            return
-
-        header = "进群时间：【等级】QQ-昵称\n\n"
-        await self._send_image_or_fallback(event, header + "\n\n".join(info_lines), header, info_lines)
-
-    async def _send_image_or_fallback(self, event: AiocqhttpMessageEvent, image_text: str, title: str, lines: list[str]):
-        """图片优先展示，生成失败时降级为分片文本。"""
-        try:
-            url = await self.text_to_image(image_text)
-            if not url:
-                raise RuntimeError("text_to_image 未返回图片地址")
-            await event.send(event.image_result(url))
-        except Exception as e:
-            logger.warning(f"生成图片失败，回退为文本发送：{e}")
-            await self._send_text_fallback(event, title, lines)
-
-    async def _send_text_fallback(self, event: AiocqhttpMessageEvent, title: str, lines: list[str], chunk_size: int = 40, max_chars: int = 1500):
-        """图片生成失败时，将长文本分片发送，避免单条消息超出平台长度限制（按行数与字长双限）。"""
-        total = len(lines)
-        # 预估单条不超限直接发
-        if total <= chunk_size and len(title) + sum(len(line) + 1 for line in lines) <= max_chars:
-            await event.send(event.plain_result(title + "\n" + "\n".join(lines)))
-            return
+    async def _send_text(self, event: AiocqhttpMessageEvent, title: str, lines: list[str], chunk_size: int = 40, max_chars: int = 1500):
+        """长文本按行数与字长双限分片发送，避免单条消息超出平台长度"""
+        chunks: list[tuple[int, list[str]]] = []
         buf: list[str] = []
-        cur_len = len(title)
-        start_idx = 0
+        cur_len = 0
+        start = 0
         for idx, line in enumerate(lines):
-            if len(buf) >= chunk_size or cur_len + len(line) + 1 > max_chars:
-                head = title if start_idx == 0 else f"（续 {start_idx + 1}-{start_idx + len(buf)}/{total}）"
-                await event.send(event.plain_result(f"{head}\n" + "\n".join(buf)))
-                start_idx += len(buf)
-                buf = []
-                cur_len = 0
+            if buf and (len(buf) >= chunk_size or cur_len + len(line) + 1 > max_chars):
+                chunks.append((start, buf))
+                buf, cur_len, start = [], 0, idx
             buf.append(line)
             cur_len += len(line) + 1
         if buf:
-            head = title if start_idx == 0 else f"（续 {start_idx + 1}-{total}/{total}）"
-            await event.send(event.plain_result(f"{head}\n" + "\n".join(buf)))
+            chunks.append((start, buf))
 
-    async def clear_group_member(
-        self,
-        event: AiocqhttpMessageEvent,
-        inactive_days: int | None = None,
-        under_level: int | None = None,
-    ):
+        total = len(lines)
+        for i, (start, chunk) in enumerate(chunks):
+            head = title if i == 0 else f"（续 {start + 1}-{start + len(chunk)}/{total}）"
+            await event.send(event.plain_result(f"{head}\n" + "\n".join(chunk)))
+
+    def _get_clear_lock(self, group_id: str) -> asyncio.Lock:
+        """取本群清理任务的互斥锁（按群隔离，惰性创建）"""
+        return self._clear_locks.setdefault(group_id, asyncio.Lock())
+
+    async def get_group_member_list(self, event: AiocqhttpMessageEvent):
+        """查看群友信息，长文本自动分片发送。"""
+        await event.send(event.plain_result("获取中..."))
+        members = await self._fetch_members(event, event.get_group_id())
+        if members is None:
+            return
+
+        members = sorted(members, key=lambda m: _safe_int(m.get("join_time")))
+        info_lines = [f"{format_time(_safe_int(m.get('join_time')))}：【{m.get('level', 0)}】{m.get('user_id', '?')}-{m.get('nickname', '（无昵称）')}" for m in members]
+        if not info_lines:
+            await event.send(event.plain_result("群内暂无成员数据"))
+            return
+        await self._send_text(event, "进群时间：【等级】QQ-昵称\n", info_lines)
+
+    async def clear_group_member(self, event: AiocqhttpMessageEvent, inactive_days: int | None = None, under_level: int | None = None):
         """/清理群友 未发言天数 群等级（缺省用本群配置）"""
-        group_id = event.get_group_id()
-        sender_id = event.get_sender_id()
-
-        if inactive_days is None:
-            inactive_days = await self.db.get(group_id, "clear_inactive_days", 30)
-        if under_level is None:
-            under_level = await self.db.get(group_id, "clear_under_level", 10)
-
-        try:
-            members_data = await event.bot.get_group_member_list(group_id=int(group_id))
-        except Exception as e:
-            await event.send(event.plain_result(f"获取群成员信息失败：{e}"))
+        lock = self._get_clear_lock(event.get_group_id())
+        if lock.locked():
+            await event.send(event.plain_result("本群已有清理任务正在进行，请等待其结束或取消后再试"))
             return
 
-        threshold_ts = int(datetime.now().timestamp()) - inactive_days * 86400
-        rows: list[tuple[int, int, str, str]] = []
+        async with lock:
+            group_id = event.get_group_id()
+            sender_id = event.get_sender_id()
+            if inactive_days is None:
+                inactive_days = await self.db.get(group_id, "clear_inactive_days", 30)
+            if under_level is None:
+                under_level = await self.db.get(group_id, "clear_under_level", 10)
 
-        for member in members_data:  # type: ignore
-            try:
-                last_sent = int(member.get("last_sent_time", 0) or 0)
-            except (TypeError, ValueError):
-                last_sent = 0
-            try:
-                level = int(member.get("level", 0))
-            except (TypeError, ValueError):
-                level = 0
-            user_id = member.get("user_id", "")
-            nickname = member.get("nickname", "（无昵称）")
-
-            if last_sent < threshold_ts and level < under_level:
-                rows.append((last_sent, level, user_id, nickname))
-
-        # 白名单成员不清理（可通过“清理跳过白名单”配置关闭）
-        skipped = 0
-        if await self.db.get(group_id, "clear_skip_allow", True):
-            allow_ids = {str(uid) for uid in await resolve_allow_ids(self.db, self.global_list, group_id)}
-            skipped = sum(1 for row in rows if str(row[2]) in allow_ids)
-            rows = [row for row in rows if str(row[2]) not in allow_ids]
-
-        if not rows:
-            if skipped:
-                await event.send(event.plain_result(f"符合条件的 {skipped} 位均为白名单成员，已跳过"))
-            else:
-                await event.send(event.plain_result("无符合条件的群友"))
-            return
-
-        # 按发言时间排序（直接按时间戳排序，不再反解析格式化字符串）
-        rows.sort(key=lambda row: row[0])
-
-        clear_ids: list[int] = []
-        info_lines: list[str] = []
-        for last_sent, level, user_id, nickname in rows:
-            clear_ids.append(user_id)
-            info_lines.append(f"- **{format_time(last_sent)}**｜**{level}**级｜`{user_id}` - {nickname}")
-
-        info_str = (
-            f"### 共 **{len(clear_ids)}** 位群友 **{inactive_days}** 天内无发言，群等级低于 **{under_level}** 级\n\n"
-            + "\n".join(info_lines)
-            + (f"\n\n（另有 {skipped} 位白名单成员已跳过）" if skipped else "")
-            + "\n\n### 请发送 **确认清理** 或 **取消清理** 来处理这些群友！"
-        )
-
-        fallback_title = (
-            f"共 {len(clear_ids)} 位群友符合清理条件（{inactive_days} 天内无发言且群等级低于 {under_level} 级）"
-            + (f"，另有 {skipped} 位白名单成员已跳过" if skipped else "")
-            + "，请发送「确认清理」或「取消清理」："
-        )
-        # 候选人太多时图片渲染慢且易失败，直接走文本分片
-        if len(info_lines) > CANDIDATE_IMAGE_MAX_ROWS:
-            await self._send_text_fallback(event, fallback_title, info_lines)
-        else:
-            await self._send_image_or_fallback(event, info_str, fallback_title, info_lines)
-
-        @session_waiter(timeout=60)  # type: ignore
-        async def empty_mention_waiter(controller: SessionController, event: AiocqhttpMessageEvent):
-            if group_id != event.get_group_id() or sender_id != event.get_sender_id():
+            await event.send(event.plain_result("正在获取群友信息，请稍候……"))
+            members = await self._fetch_members(event, group_id)
+            if members is None:
                 return
 
-            if event.message_str == "取消清理":
-                await event.send(event.plain_result("清理群友任务已取消"))
-                controller.stop()
+            threshold_ts = int(datetime.now().timestamp()) - inactive_days * 86400
+            rows: list[tuple[int, int, str, str]] = []
+            for m in members:
+                last_sent = _safe_int(m.get("last_sent_time"))
+                level = _safe_int(m.get("level"))
+                if last_sent < threshold_ts and level < under_level:
+                    rows.append((last_sent, level, m.get("user_id", ""), m.get("nickname", "（无昵称）")))
+
+            # 白名单成员不清理（可通过“清理跳过白名单”配置关闭）
+            skipped = 0
+            if await self.db.get(group_id, "clear_skip_allow", True):
+                allow_ids = {str(uid) for uid in await resolve_allow_ids(self.db, self.global_list, group_id)}
+                kept = [r for r in rows if str(r[2]) not in allow_ids]
+                skipped = len(rows) - len(kept)
+                rows = kept
+
+            if not rows:
+                await event.send(event.plain_result(f"符合条件的 {skipped} 位均为白名单成员，已跳过" if skipped else "无符合条件的群友"))
                 return
 
-            if event.message_str == "确认清理":
+            rows.sort(key=lambda r: r[0])
+            clear_ids = [r[2] for r in rows]
+            info_lines = [f"{format_time(r[0])}｜{r[1]}级｜{r[2]} - {r[3]}" for r in rows]
+            title = (
+                f"共 {len(clear_ids)} 位群友符合清理条件（{inactive_days} 天内无发言且群等级低于 {under_level} 级）"
+                + (f"，另有 {skipped} 位白名单成员已跳过" if skipped else "")
+                + "，请发送「确认清理」或「取消清理」："
+            )
+            await self._send_text(event, title, info_lines)
+
+            @session_waiter(timeout=60)  # type: ignore
+            async def waiter(controller: SessionController, event: AiocqhttpMessageEvent):
+                if group_id != event.get_group_id() or sender_id != event.get_sender_id():
+                    return
+                if event.message_str == "取消清理":
+                    await event.send(event.plain_result("清理群友任务已取消"))
+                    controller.stop()
+                    return
+                if event.message_str != "确认清理":
+                    return
+
                 await event.send(event.plain_result(f"正在执行清理（共 {len(clear_ids)} 位），请稍候……"))
                 kick_semaphore = asyncio.Semaphore(KICK_CONCURRENCY)
 
-                async def _kick_one(clear_id):
-                    target_name = str(clear_id)
+                async def kick_one(clear_id):
+                    name = str(clear_id)
                     try:
                         async with kick_semaphore:
-                            target_name = await get_nickname(event, user_id=clear_id)
-                            await event.bot.set_group_kick(
-                                group_id=int(group_id),
-                                user_id=int(clear_id),
-                                reject_add_request=False,
-                            )
-                            return f"✅ 已将 {target_name}({clear_id}) 踢出本群"
+                            name = await get_nickname(event, user_id=clear_id)
+                            await event.bot.set_group_kick(group_id=int(group_id), user_id=int(clear_id), reject_add_request=False)
+                            return f"✅ 已将 {name}({clear_id}) 踢出本群"
                     except Exception as e:
-                        logger.error(f"踢出 {target_name}({clear_id}) 失败：{e}")
-                        return f"❌ 踢出 {target_name}({clear_id}) 失败"
+                        logger.error(f"踢出 {name}({clear_id}) 失败：{e}")
+                        return f"❌ 踢出 {name}({clear_id}) 失败"
 
                 # gather 保序，结果顺序与候选名单一致
-                msg_list = list(await asyncio.gather(*[_kick_one(cid) for cid in clear_ids]))
-
-                if msg_list:
-                    await event.send(event.plain_result("\n".join(msg_list)))
+                results = await asyncio.gather(*[kick_one(cid) for cid in clear_ids])
+                if results:
+                    await event.send(event.plain_result("\n".join(results)))
                 controller.stop()
 
-        try:
-            await empty_mention_waiter(event)
-        except TimeoutError as _:
-            await event.send(event.plain_result("等待超时！"))
-        except Exception as e:
-            logger.error("清理群友任务出错: " + str(e))
-        finally:
-            event.stop_event()
+            try:
+                await waiter(event)
+            except TimeoutError:
+                await event.send(event.plain_result("等待超时！"))
+            except Exception as e:
+                logger.error("清理群友任务出错: " + str(e))
+                await event.send(event.plain_result(f"清理群友任务出错：{e}"))
+            finally:
+                event.stop_event()
