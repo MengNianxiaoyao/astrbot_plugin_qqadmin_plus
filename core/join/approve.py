@@ -83,14 +83,21 @@ class JoinApprover:
                 self.state.drop_pending(lambda k, r: r.get("flag") == flag)
             return hint
 
+    async def _send_reply(self, event: AiocqhttpMessageEvent, reply: str):
+        """发送审批结果；发送失败只记日志，避免异常逃逸触发 AstrBot 兜底报错链"""
+        try:
+            await event.send(event.plain_result(reply))
+        except Exception as e:
+            logger.error(f"发送进群审批结果失败: {e}")
+
     async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         """批准进群申请"""
         reply = await self.set_approve(event=event, extra=extra, approve=True)
         if reply:
-            await event.send(event.plain_result(reply))
+            await self._send_reply(event, reply)
 
     async def refuse_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         """驳回进群申请"""
         reply = await self.set_approve(event=event, extra=extra, approve=False)
         if reply:
-            await event.send(event.plain_result(reply))
+            await self._send_reply(event, reply)

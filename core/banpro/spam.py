@@ -1,4 +1,4 @@
-"""刷屏模块：滑动窗口状态、刷屏时长配置与刷屏禁言执法。"""
+"""刷屏模块：滑动窗口状态与刷屏禁言执法。"""
 
 import time
 from collections import defaultdict, deque
@@ -14,7 +14,7 @@ from ...utils import get_nickname
 
 
 class SpamDetector:
-    """刷屏模块：滑动窗口状态、刷屏时长配置与刷屏禁言执法。"""
+    """刷屏模块：滑动窗口状态与刷屏禁言执法。"""
 
     def __init__(self, config: PluginConfig, db: QQAdminDB):
         self.cfg = config
@@ -22,17 +22,6 @@ class SpamDetector:
         # 不用 maxlen 固定，动态读取 cfg.spamming_count，便于热更新与手动裁剪
         self.msg_timestamps: dict[str, dict[str, deque[float]]] = defaultdict(lambda: defaultdict(deque))
         self.last_banned_time: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-
-    async def handle_spamming_ban_time(self, event: AiocqhttpMessageEvent, time: int | None):
-        """设置刷屏禁言时长"""
-        gid = event.get_group_id()
-        if isinstance(time, int):
-            await self.db.set(gid, "spamming_ban_time", time)
-            msg = f"本群刷屏禁言时长已设为：{time} 秒" if time > 0 else "本群刷屏禁言已关闭"
-            await event.send(event.plain_result(msg))
-        else:
-            status = await self.db.get(gid, "spamming_ban_time", 0)
-            await event.send(event.plain_result(f"本群刷屏禁言时长：{status} 秒"))
 
     async def spamming_ban(self, event: AiocqhttpMessageEvent):
         """刷屏禁言"""

@@ -6,7 +6,7 @@
 - 不按值比较（显式值恰好等于默认值也不算跟随）；历史无 marker 行
   只在 init 一次性迁移时按值判定，之后不再使用。
 - 读：all/get/get_group_snapshot（快照自动补齐新增字段并写回）；
-  写：set/replace_group/add；删：delete_group/follow_default/reset_to_default。
+  写：set/replace_group/add；删：delete_group/follow_default。
 
 子模块：group_db.QQAdminDB / global_list.QQAdminGlobalList。
 """

@@ -6,11 +6,6 @@
 - 带 llm_tool 的行自动成为 LLM 工具门禁——LLM 的 perm_key/bot_perm 与
   命令共用同一行，不再维护第二张表（之前逐项重复是主要复杂度来源）。
 - main.py 只用两个工厂：perm_required_for（群聊命令）/ llm_guarded_for（LLM）。
-
-Note: `handle_spamming_ban_time` intentionally uses
-`perm_key="handle_builtin_ban_words"`. That is the schema's key for the
-刷屏禁言指令 (`_conf_schema.json`), not copy-paste drift. It is pinned here
-so the next reader doesn't "fix" it.
 """
 
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -31,8 +26,7 @@ class CommandSpec:
     llm_tool: str | None = None
 
 
-# Keyed by command method name in QQAdminPlugin. set_config / reset_config
-# keep bespoke gates and stay out of this table.
+# Keyed by command method name in QQAdminPlugin.
 COMMAND_SPECS: dict[str, CommandSpec] = {
     # ---------- 基础群管 ----------
     "set_group_ban": CommandSpec("group_ban", llm_tool="llm_set_group_ban"),
@@ -53,11 +47,7 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "delete_msg": CommandSpec("delete_msg", PermLevel.MEMBER),
     "send_group_notice": CommandSpec("send_group_notice", llm_tool="llm_send_group_notice"),
     "get_group_notice": CommandSpec("get_group_notice", PermLevel.MEMBER, llm_tool="llm_get_group_notice"),
-    # ---------- 违禁词 / 刷屏 / 投票 / 宵禁 ----------
-    "handle_word_ban_time": CommandSpec("word_ban"),
-    "handle_ban_words": CommandSpec("word_ban"),
-    "handle_builtin_ban_words": CommandSpec("word_ban"),
-    "handle_spamming_ban_time": CommandSpec("handle_builtin_ban_words"),
+    # ---------- 投票 / 宵禁 ----------
     "start_vote_mute": CommandSpec("vote"),
     "agree_vote_mute": CommandSpec("vote"),
     "disagree_vote_mute": CommandSpec("vote"),
@@ -67,28 +57,9 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "disagree_vote_kick": CommandSpec("vote"),
     "start_curfew": CommandSpec("curfew"),
     "stop_curfew": CommandSpec("curfew"),
-    # ---------- 进群审核 / 欢迎 / 退群 ----------
-    "handle_join_review": CommandSpec("join"),
-    "handle_accept_words": CommandSpec("join"),
-    "handle_reject_words": CommandSpec("join"),
-    "handle_no_match_reject": CommandSpec("join"),
-    "handle_join_full_reject": CommandSpec("join"),
-    "handle_join_full_msg": CommandSpec("join"),
-    "handle_join_pending_msg": CommandSpec("join"),
-    "handle_join_pending_ttl": CommandSpec("join"),
-    "handle_join_min_level": CommandSpec("join"),
-    "handle_join_max_time": CommandSpec("join"),
-    "handle_allow_ids": CommandSpec("join"),
-    "handle_reject_ids": CommandSpec("join"),
-    "agree_add_group": CommandSpec("approve", allow_private=True),
-    "refuse_add_group": CommandSpec("approve", allow_private=True),
-    "handle_join_ban": CommandSpec("welcome"),
-    "handle_join_welcome": CommandSpec("welcome", PermLevel.MEMBER),
-    "handle_leave_notify": CommandSpec("leave", PermLevel.MEMBER),
-    "handle_leave_block": CommandSpec("leave"),
-    "handle_global_allow": CommandSpec("join"),
-    "handle_global_block": CommandSpec("join"),
-    # ---------- 群友管理 / 群文件 ----------
+    # ---------- 进群审批 / 群友管理 / 群文件 ----------
+    "agree_add_group": CommandSpec("approve", allow_private=True, check_at=False),
+    "refuse_add_group": CommandSpec("approve", allow_private=True, check_at=False),
     "get_group_member_list": CommandSpec("get_group_member_list", PermLevel.MEMBER),
     "clear_group_member": CommandSpec("clear_group_member", PermLevel.MEMBER),
     "upload_group_file": CommandSpec("upload_group_file", PermLevel.MEMBER, llm_tool="llm_upload_group_file"),
@@ -96,7 +67,7 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "view_group_file": CommandSpec("view_group_file", PermLevel.MEMBER, llm_tool="llm_view_group_file"),
 }
 
-# 反向索引：llm_tool 名 -> 同一 CommandSpec。vote / curfew / join
+# 反向索引：llm_tool 名 -> 同一 CommandSpec。vote / curfew / approve
 # 无 llm_tool（command-only，产品决策），误调会 KeyError。
 _BY_LLM_TOOL: dict[str, CommandSpec] = {spec.llm_tool: spec for spec in COMMAND_SPECS.values() if spec.llm_tool}
 

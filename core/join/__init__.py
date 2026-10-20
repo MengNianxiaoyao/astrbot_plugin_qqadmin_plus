@@ -6,13 +6,12 @@ from ...config import PluginConfig
 from ...data import QQAdminDB, QQAdminGlobalList
 from .approve import JoinApprover
 from .events import JoinEvents
-from .manage import JoinManager
 from .review import JoinReviewer
 from .state import JoinState
 
 
 class JoinHandle:
-    """进群模块门面：对外 API 与拆分前完全一致，内部按审核判定/配置管理/人工审批/事件监听分工。"""
+    """进群模块门面：审核判定 / 人工审批 / 事件监听分工。"""
 
     def __init__(
         self,
@@ -21,71 +20,10 @@ class JoinHandle:
         global_list: QQAdminGlobalList,
         group_cache,
     ):
-        self.cfg = config
-        self.db = db
-        self.global_list = global_list
-        self._group_cache = group_cache
         self.state = JoinState(config.data_dir)
         self.reviewer = JoinReviewer(db, global_list, group_cache, self.state)
-        self.manager = JoinManager(db, global_list)
         self.approver = JoinApprover(self.state)
         self.events = JoinEvents(config, db, global_list, group_cache, self.state, self.reviewer)
-
-    # -----------修改配置-----------------
-
-    async def handle_join_review(self, event: AiocqhttpMessageEvent, mode_str: str | bool | None):
-        await self.manager.handle_join_review(event, mode_str)
-
-    async def handle_accept_words(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_accept_words(event)
-
-    async def handle_reject_words(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_reject_words(event)
-
-    async def handle_no_match_reject(self, event: AiocqhttpMessageEvent, mode_str: str | bool | None):
-        await self.manager.handle_no_match_reject(event, mode_str)
-
-    async def handle_join_full_reject(self, event: AiocqhttpMessageEvent, mode_str: str | bool | None):
-        await self.manager.handle_join_full_reject(event, mode_str)
-
-    async def handle_join_full_msg(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_join_full_msg(event)
-
-    async def handle_join_pending_msg(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_join_pending_msg(event)
-
-    async def handle_join_pending_ttl(self, event: AiocqhttpMessageEvent, days: int | None):
-        await self.manager.handle_join_pending_ttl(event, days)
-
-    async def handle_join_min_level(self, event: AiocqhttpMessageEvent, level: int | None):
-        await self.manager.handle_join_min_level(event, level)
-
-    async def handle_join_max_time(self, event: AiocqhttpMessageEvent, time: int | None):
-        await self.manager.handle_join_max_time(event, time)
-
-    async def handle_allow_ids(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_allow_ids(event)
-
-    async def handle_block_ids(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_block_ids(event)
-
-    async def handle_global_allow(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_global_allow(event)
-
-    async def handle_global_block(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_global_block(event)
-
-    async def handle_join_ban(self, event: AiocqhttpMessageEvent, time: int | None):
-        await self.manager.handle_join_ban(event, time)
-
-    async def handle_join_welcome(self, event: AiocqhttpMessageEvent):
-        await self.manager.handle_join_welcome(event)
-
-    async def handle_leave_notify(self, event: AiocqhttpMessageEvent, mode_str):
-        await self.manager.handle_leave_notify(event, mode_str)
-
-    async def handle_leave_block(self, event: AiocqhttpMessageEvent, mode_str):
-        await self.manager.handle_leave_block(event, mode_str)
 
     # ---------处理事件-----------------
 
