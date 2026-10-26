@@ -13,7 +13,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ..config import PluginConfig
 from ..data import QQAdminDB, QQAdminGlobalList
-from ..utils import extract_image_url, get_ats, get_nickname
+from ..utils import extract_image_url, get_nickname, get_target_ids
 
 
 class NormalHandle:
@@ -44,7 +44,7 @@ class NormalHandle:
             ban_time = self.cfg.get_ban_time_with_range(group_config.get("random_ban_time"), None)
         else:
             ban_time = self.cfg.get_ban_time_with_range(group_config.get("random_ban_time"), ban_time)
-        tids = [target_id] if target_id else get_ats(event)
+        tids = [target_id] if target_id else get_target_ids(event)
         if not tids:
             return "未指定要禁言的用户"
         results = []
@@ -72,7 +72,7 @@ class NormalHandle:
         target_id: str | int = "",
         target_card: str | int = "",
     ):
-        tids = ([target_id] if target_id else get_ats(event)) or [event.get_sender_id()]
+        tids = ([target_id] if target_id else get_target_ids(event)) or [event.get_sender_id()]
         results = []
         for tid in tids:
             try:
@@ -96,7 +96,7 @@ class NormalHandle:
     ):
         if special_title and len(str(special_title)) > 6:
             return "头衔长度不能超过6个字符"
-        tids = ([target_id] if target_id else get_ats(event)) or [event.get_sender_id()]
+        tids = ([target_id] if target_id else get_target_ids(event)) or [event.get_sender_id()]
         results = []
         for tid in tids:
             try:
@@ -114,7 +114,7 @@ class NormalHandle:
         return "\n".join(results) if results else "未指定要设置头衔的用户"
 
     async def set_group_kick(self, event: AiocqhttpMessageEvent, target_id: str | int = ""):
-        tids = [target_id] if target_id else get_ats(event)
+        tids = [target_id] if target_id else get_target_ids(event)
         results = []
         for tid in tids:
             try:
@@ -131,7 +131,7 @@ class NormalHandle:
         return "\n".join(results) if results else "未指定要踢出的用户"
 
     async def set_group_block(self, event: AiocqhttpMessageEvent, target_id: str | int = ""):
-        tids = [target_id] if target_id else get_ats(event)
+        tids = [target_id] if target_id else get_target_ids(event)
         results = []
         for tid in tids:
             try:
@@ -154,7 +154,7 @@ class NormalHandle:
 
     async def set_group_admin(self, event: AiocqhttpMessageEvent, enable: bool):
         results = []
-        for tid in get_ats(event):
+        for tid in get_target_ids(event):
             try:
                 target_name = await get_nickname(event, user_id=tid)
                 await event.bot.set_group_admin(group_id=int(event.get_group_id()), user_id=int(tid), enable=enable)

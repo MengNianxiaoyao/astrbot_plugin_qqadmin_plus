@@ -72,12 +72,29 @@ def get_reply_message_str(event: AiocqhttpMessageEvent) -> str | None:
     )
 
 
-def get_replyer_message_id(event: AiocqhttpMessageEvent) -> str | None:
+def get_reply_message_id(event: AiocqhttpMessageEvent) -> str | None:
     """获取被引用消息的消息ID，用于精确匹配进群申请通知等引用消息。"""
     for seg in event.get_messages():
-        if isinstance(seg, Reply) and getattr(seg, "message_id", None):
-            return str(seg.message_id)
+        if isinstance(seg, Reply) and seg.id:
+            return str(seg.id)
     return None
+
+
+def get_replyer_id(event: AiocqhttpMessageEvent) -> str | None:
+    """获取被引用消息发送者的id（排除机器人自己）"""
+    for seg in event.get_messages():
+        if isinstance(seg, Reply) and seg.sender_id and str(seg.sender_id) != str(event.get_self_id()):
+            return str(seg.sender_id)
+    return None
+
+
+def get_target_ids(event: AiocqhttpMessageEvent) -> list[str]:
+    """操作目标：优先取 @ 的群友，没有则取被引用消息的发送者。"""
+    tids = get_ats(event)
+    if tids:
+        return tids
+    replyer_id = get_replyer_id(event)
+    return [replyer_id] if replyer_id else []
 
 
 def extract_message_id(result) -> str | None:

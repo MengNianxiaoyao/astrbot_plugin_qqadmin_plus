@@ -12,7 +12,7 @@ from ...config import PluginConfig
 from ...data import QQAdminDB
 from ...permission.levels import PermLevel
 from ...permission.manager import perm_manager
-from ...utils import get_ats, get_nickname
+from ...utils import get_nickname, get_target_ids
 
 
 class VoteSession:
@@ -95,7 +95,7 @@ class VoteSession:
 
     async def _start_vote(self, event, kind: str, ban_time: int | None = None):
         vote_name, _ = self._vote_label(kind)
-        target_ids = get_ats(event)
+        target_ids = get_target_ids(event)
         if not target_ids:
             return
         target_id = target_ids[0]

@@ -24,19 +24,21 @@ class CommandSpec:
     check_at: bool = True
     allow_private: bool = False
     llm_tool: str | None = None
+    quote_target: bool = False
+    """目标可由引用消息指定（@ 为空时生效），check_at 需连引用者一起校验。"""
 
 
 # Keyed by command method name in QQAdminPlugin.
 COMMAND_SPECS: dict[str, CommandSpec] = {
     # ---------- 基础群管 ----------
-    "set_group_ban": CommandSpec("group_ban", llm_tool="llm_set_group_ban"),
-    "cancel_group_ban": CommandSpec("group_ban"),
+    "set_group_ban": CommandSpec("group_ban", llm_tool="llm_set_group_ban", quote_target=True),
+    "cancel_group_ban": CommandSpec("group_ban", quote_target=True),
     "set_group_whole_ban": CommandSpec("whole_ban", llm_tool="llm_set_group_whole_ban"),
-    "set_group_card": CommandSpec("set_group_card", llm_tool="llm_set_group_card"),
-    "set_group_special_title": CommandSpec("set_group_special_title", PermLevel.OWNER, llm_tool="llm_set_group_special_title"),
+    "set_group_card": CommandSpec("set_group_card", llm_tool="llm_set_group_card", quote_target=True),
+    "set_group_special_title": CommandSpec("set_group_special_title", PermLevel.OWNER, llm_tool="llm_set_group_special_title", quote_target=True),
     "set_group_special_title_me": CommandSpec("set_group_special_title_me", PermLevel.OWNER),
-    "set_group_kick": CommandSpec("set_group_kick", llm_tool="llm_set_group_kick"),
-    "set_group_block": CommandSpec("set_group_block", llm_tool="llm_set_group_block"),
+    "set_group_kick": CommandSpec("set_group_kick", llm_tool="llm_set_group_kick", quote_target=True),
+    "set_group_block": CommandSpec("set_group_block", llm_tool="llm_set_group_block", quote_target=True),
     "set_group_admin": CommandSpec("admin", PermLevel.OWNER, check_at=False),
     "cancel_group_admin": CommandSpec("admin", PermLevel.OWNER, check_at=False),
     "set_essence_msg": CommandSpec("essence", llm_tool="llm_set_essence_msg"),
@@ -48,11 +50,11 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "send_group_notice": CommandSpec("send_group_notice", llm_tool="llm_send_group_notice"),
     "get_group_notice": CommandSpec("get_group_notice", PermLevel.MEMBER, llm_tool="llm_get_group_notice"),
     # ---------- 投票 / 宵禁 ----------
-    "start_vote_mute": CommandSpec("vote"),
+    "start_vote_mute": CommandSpec("vote", quote_target=True),
     "agree_vote_mute": CommandSpec("vote"),
     "disagree_vote_mute": CommandSpec("vote"),
     "cancel_vote_mute": CommandSpec("vote"),
-    "start_vote_kick": CommandSpec("vote"),
+    "start_vote_kick": CommandSpec("vote", quote_target=True),
     "agree_vote_kick": CommandSpec("vote"),
     "disagree_vote_kick": CommandSpec("vote"),
     "start_curfew": CommandSpec("curfew"),
@@ -80,6 +82,7 @@ def perm_required_for(method_name: str) -> Callable[..., Callable[..., AsyncGene
         perm_key=spec.perm_key,
         check_at=spec.check_at,
         allow_private=spec.allow_private,
+        check_quote=spec.quote_target,
     )
 
 

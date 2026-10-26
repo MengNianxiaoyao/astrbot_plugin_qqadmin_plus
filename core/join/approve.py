@@ -3,7 +3,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
-from ...utils import get_reply_message_str, get_replyer_message_id
+from ...utils import get_reply_message_str, get_reply_message_id
 from .state import JoinState
 
 
@@ -36,7 +36,8 @@ class JoinApprover:
     async def set_approve(self, event: AiocqhttpMessageEvent, extra: str = "", approve: bool = True) -> str | None:
         """处理进群申请：优先按引用消息ID精确匹配，失败则按文本内容定位兜底。"""
         text = get_reply_message_str(event)
-        if not text:
+        reply_id = get_reply_message_id(event)
+        if not text and not reply_id:
             return "未引用任何【进群申请】"
 
         nickname = None
@@ -44,15 +45,14 @@ class JoinApprover:
         pending_entry = None
 
         # A2：按被引用消息ID精确匹配已登记的通知（只查看不取出，落定成功后按 flag 统一清）
-        reply_id = get_replyer_message_id(event)
         if reply_id:
             pending_entry = self.state.pending.get(reply_id)
             if pending_entry:
                 flag = pending_entry["flag"]
                 nickname = pending_entry["nickname"]
 
-        # A1：兜底从通知文本中按内容定位解析（不依赖固定行号）
-        if flag is None:
+        # A1：兜底从通知文本中按内容定位解析（不依赖固定行号）；拿不到文本时只靠 A2
+        if flag is None and text:
             try:
                 nickname = self._extract_field(text, "昵称：") or nickname
                 flag = self._extract_field(text, "flag：") or flag
