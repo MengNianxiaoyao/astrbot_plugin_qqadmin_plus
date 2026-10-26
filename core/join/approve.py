@@ -3,7 +3,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
-from ...utils import get_reply_message_str, get_reply_message_id
+from ...utils import get_reply_message_id, get_reply_message_str
 from .state import JoinState
 
 

@@ -197,9 +197,7 @@ def perm_required(
                 return
 
             # 判断权限
-            result = await perm_manager.perm_block(
-                event, bot_perm=bot_perm, perm_key=actual_perm_key, check_at=check_at, check_quote=check_quote
-            )
+            result = await perm_manager.perm_block(event, bot_perm=bot_perm, perm_key=actual_perm_key, check_at=check_at, check_quote=check_quote)
             if result:
                 yield event.plain_result(result)
                 event.stop_event()
