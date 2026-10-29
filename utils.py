@@ -59,11 +59,7 @@ async def resolve_block_ids(db, global_list, gid: str) -> list:
 
 def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
     """获取被 at 者们的 id 列表（排除 Bot 自身与 @全体成员）"""
-    return [
-        str(seg.qq)
-        for seg in event.get_messages()
-        if isinstance(seg, At) and str(seg.qq) not in {str(event.get_self_id()), "all"}
-    ]
+    return [str(seg.qq) for seg in event.get_messages() if isinstance(seg, At) and str(seg.qq) not in {str(event.get_self_id()), "all"}]
 
 
 def is_group_admin(event: AiocqhttpMessageEvent) -> bool:

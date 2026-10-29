@@ -92,11 +92,7 @@ class CurfewHandle:
 
     async def initialize(self):
         async with self._init_lock:
-            tasks = [
-                self._initialize_aiocqhttp_adapter(inst)
-                for inst in self.context.platform_manager.platform_insts
-                if isinstance(inst, AiocqhttpAdapter)
-            ]
+            tasks = [self._initialize_aiocqhttp_adapter(inst) for inst in self.context.platform_manager.platform_insts if isinstance(inst, AiocqhttpAdapter)]
             if tasks:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 for r in results:
