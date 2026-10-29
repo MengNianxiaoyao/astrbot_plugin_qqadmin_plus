@@ -25,13 +25,16 @@ class NoticeHandle:
         image_url: str | None = None,
     ):
         """(引用图片)发布群公告 xxx"""
-        content = content or event.message_str.partition(" ")[2]
+        if not content:
+            parts = event.message_str.split(maxsplit=1)
+            content = parts[1].strip() if len(parts) > 1 else ""
         if not content:
             return "未指定群公告内容"
+
         gid = event.get_group_id()
         image_path = ""
         if image_url := (image_url or extract_image_url(chain=event.get_messages())):
-            img_name = f"{gid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            img_name = f"{gid}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
             temp_path = self.cfg.group_notice_dir / img_name
 
             logger.debug(f"Group notice image temp path: {temp_path}")
@@ -39,36 +42,32 @@ class NoticeHandle:
             if not image_path:
                 return "图片获取失败"
 
+        payload = {
+            "group_id": int(gid),
+            "content": content,
+        }
+        if image_path:
+            payload["image"] = str(image_path)
+
+        last_error: Exception | None = None
+        # go-cqhttp / NapCat 用带下划线的扩展接口名；部分实现只提供不带下划线的版本
+        for action in ("_send_group_notice", "send_group_notice"):
             try:
-                await event.bot.api.call_action(
-                    "send_group_notice",
-                    group_id=int(event.get_group_id()),
-                    content=content,
-                    image=str(image_path),
-                )
-            except AttributeError:
-                await event.bot._send_group_notice(
-                    group_id=int(event.get_group_id()),
-                    content=content,
-                    image=str(image_path),
-                )
+                await event.bot.call_action(action, **payload)
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+        if last_error is not None:
+            logger.warning(f"发布群公告失败: {last_error}")
+            return f"群公告发布失败：{last_error}"
+
+        if image_path:
             # 清理 7 天前或超 50 张的旧图
             try:
                 await self._cleanup_old_images()
             except Exception:
                 pass
-        else:
-            try:
-                await event.bot.api.call_action(
-                    "send_group_notice",
-                    group_id=int(event.get_group_id()),
-                    content=content,
-                )
-            except AttributeError:
-                await event.bot._send_group_notice(
-                    group_id=int(event.get_group_id()),
-                    content=content,
-                )
         return "群公告已发布"
 
     async def _cleanup_old_images(self, keep: int = 50, max_age_days: int = 7):
@@ -95,14 +94,18 @@ class NoticeHandle:
 
     async def get_group_notice(self, event: AiocqhttpMessageEvent):
         """查看群公告"""
-        try:
-            notices = await event.bot.api.call_action("get_group_notice", group_id=int(event.get_group_id()))
-        except AttributeError:
+        notices = None
+        last_error: Exception | None = None
+        for action in ("_get_group_notice", "get_group_notice"):
             try:
-                notices = await event.bot._get_group_notice(group_id=int(event.get_group_id()))
+                notices = await event.bot.call_action(action, group_id=int(event.get_group_id()))
+                last_error = None
+                break
             except Exception as e:
-                logger.warning(f"获取群公告失败: {e}")
-                return "获取群公告失败"
+                last_error = e
+        if last_error is not None:
+            logger.warning(f"获取群公告失败: {last_error}")
+            return "获取群公告失败"
 
         if isinstance(notices, dict):
             notices = notices.get("data", []) or []

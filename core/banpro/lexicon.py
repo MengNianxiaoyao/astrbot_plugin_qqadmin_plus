@@ -9,6 +9,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ...config import PluginConfig
 from ...data import QQAdminDB
+from ...utils import is_group_admin
 
 
 class LexiconStore:
@@ -79,18 +80,24 @@ class LexiconStore:
         return None
 
     async def on_ban_words(self, event: AiocqhttpMessageEvent):
-        """检测禁词并撤回消息、禁言用户"""
+        """检测禁词并撤回消息、禁言用户；管理/超管发言不处理。"""
+        sender_id = str(event.get_sender_id())
+        if sender_id in self.cfg.admins_id or is_group_admin(event):
+            return
+
         gid = event.get_group_id()
         snapshot = self.db.get_group_snapshot(gid)
 
         # 检测自定义的违禁词
         if ban_words := snapshot.get("custom_ban_words", []):
             if await self.check_ban_words(event, ban_words):
+                event.stop_event()
                 return
 
         # 检测内置违禁词
         if snapshot.get("builtin_ban", False):
             if await self.check_ban_words(event, self.global_ban_words):
+                event.stop_event()
                 return
 
     async def check_ban_words(self, event: AiocqhttpMessageEvent, ban_words: list[str]) -> bool:

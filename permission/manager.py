@@ -87,6 +87,7 @@ class PermissionManager:
         perm_key: str,
         check_at: bool = True,
         check_quote: bool = False,
+        target_ids: list[str] | None = None,
     ) -> str | None:
         user_level = await self.get_perm_level(event, user_id=event.get_sender_id())
 
@@ -101,11 +102,16 @@ class PermissionManager:
         bot_level = await self.get_perm_level(event, user_id=event.get_self_id())
 
         target_levels = []
-        if check_at:
+        if target_ids is not None:
+            # LLM 工具的目标由参数直接指定，没有 @/引用，需显式传入
+            explicit_targets = target_ids
+        elif check_at:
             # 引用目标只在“目标可由引用指定”的命令里参与校验，避免无关命令回复消息就被拦
-            target_ids = get_target_ids(event) if check_quote else get_ats(event)
-            for target_id in target_ids:
-                target_levels.append(await self.get_perm_level(event, user_id=target_id))
+            explicit_targets = get_target_ids(event) if check_quote else get_ats(event)
+        else:
+            explicit_targets = []
+        for target_id in explicit_targets:
+            target_levels.append(await self.get_perm_level(event, user_id=target_id))
 
         return evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
 
@@ -114,6 +120,7 @@ class PermissionManager:
         event: AiocqhttpMessageEvent,
         perm_key: str,
         bot_perm: PermLevel = PermLevel.ADMIN,
+        target_ids: list[str] | None = None,
     ) -> str | None:
         if event.platform_meta.name != "aiocqhttp":
             return "该工具仅支持通过 QQ 群聊调用"
@@ -133,6 +140,7 @@ class PermissionManager:
             bot_perm=bot_perm,
             perm_key=perm_key,
             check_at=False,
+            target_ids=target_ids,
         )
 
 

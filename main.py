@@ -75,29 +75,35 @@ class QQAdminPlugin(Star):
 
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
-        """平台加载完成时"""
-        if not self.curfew.curfew_managers:
-            asyncio.create_task(self.curfew.initialize())
+        """平台加载完成时（已初始化的 Bot 会在内部跳过）"""
+        asyncio.create_task(self.curfew.initialize())
 
     # ---------- 基础群管：禁言 / 名片 / 头衔 / 踢 / 精华 / 撤回 / 公告 ----------
     @filter.command("禁言")
     @perm_required_for("set_group_ban")
     async def set_group_ban(self, event: AiocqhttpMessageEvent, ban_time=None):
         """禁言 <秒数> @群友"""
-        await self.normal.set_group_ban(event, ban_time)
+        result = await self.normal.set_group_ban(event, ban_time)
+        if result:
+            yield event.plain_result(result)
+        event.stop_event()
 
     @filter.command("解禁")
     @perm_required_for("cancel_group_ban")
     async def cancel_group_ban(self, event: AiocqhttpMessageEvent):
         """解禁 @群友"""
-        await self.normal.set_group_ban(event, ban_time=0)
+        result = await self.normal.set_group_ban(event, ban_time=0)
+        if result:
+            yield event.plain_result(result)
+        event.stop_event()
 
     @filter.command("全禁", alias={"全员禁言", "群全员禁言"})
     @perm_required_for("set_group_whole_ban")
     async def set_group_whole_ban(self, event: AiocqhttpMessageEvent, enable: bool | str = True):
         """全禁 开/关, 开启或关闭群全员禁言"""
         enable = parse_bool(enable, default=True)
-        await self.normal.set_group_whole_ban(event, enable)
+        if result := await self.normal.set_group_whole_ban(event, enable):
+            yield event.plain_result(result)
 
     @filter.command("改名")
     @perm_required_for("set_group_card")
@@ -207,9 +213,8 @@ class QQAdminPlugin(Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
     async def on_ban_words(self, event: AiocqhttpMessageEvent):
-        """自动检测违禁词，撤回并禁言"""
-        if not event.is_admin():
-            await self.banpro.on_ban_words(event)
+        """自动检测违禁词，撤回并禁言（管理员/超管豁免在 BanproHandle 内判断）"""
+        await self.banpro.on_ban_words(event)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
@@ -351,8 +356,8 @@ class QQAdminPlugin(Star):
             yield event.plain_result(result)
 
     # ---------- LLM 工具（门禁由 COMMAND_SPECS 的 llm_tool 列派生，业务与群聊命令复用同一 Handle） ----------
-    @llm_guarded_for("llm_set_group_ban")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_ban")
     async def llm_set_group_ban(
         self,
         event: AiocqhttpMessageEvent,
@@ -367,8 +372,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_ban(event, ban_time=duration, target_id=user_id)
 
-    @llm_guarded_for("llm_set_group_card")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_card")
     async def llm_set_group_card(
         self,
         event: AiocqhttpMessageEvent,
@@ -383,8 +388,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_card(event, target_id=target_id, target_card=target_card)
 
-    @llm_guarded_for("llm_set_group_special_title")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_special_title")
     async def llm_set_group_special_title(
         self,
         event: AiocqhttpMessageEvent,
@@ -399,8 +404,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_special_title(event, target_id=target_id, special_title=special_title)
 
-    @llm_guarded_for("llm_set_group_whole_ban")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_whole_ban")
     async def llm_set_group_whole_ban(
         self,
         event: AiocqhttpMessageEvent,
@@ -413,8 +418,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_whole_ban(event, enable)
 
-    @llm_guarded_for("llm_set_group_kick")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_kick")
     async def llm_set_group_kick(
         self,
         event: AiocqhttpMessageEvent,
@@ -427,8 +432,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_kick(event, target_id=target_id)
 
-    @llm_guarded_for("llm_set_group_block")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_block")
     async def llm_set_group_block(
         self,
         event: AiocqhttpMessageEvent,
@@ -441,8 +446,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_block(event, target_id=target_id)
 
-    @llm_guarded_for("llm_set_essence_msg")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_essence_msg")
     async def llm_set_essence_msg(
         self,
         event: AiocqhttpMessageEvent,
@@ -457,8 +462,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_essence_msg(event, enable=enable, message_id=message_id)
 
-    @llm_guarded_for("llm_get_essence_msg_list")
     @filter.llm_tool()
+    @llm_guarded_for("llm_get_essence_msg_list")
     async def llm_get_essence_msg_list(
         self,
         event: AiocqhttpMessageEvent,
@@ -469,8 +474,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.get_essence_msg_list(event)
 
-    @llm_guarded_for("llm_set_group_name")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_name")
     async def llm_set_group_name(
         self,
         event: AiocqhttpMessageEvent,
@@ -483,8 +488,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_name(event, group_name)
 
-    @llm_guarded_for("llm_set_group_portrait")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_portrait")
     async def llm_set_group_portrait(
         self,
         event: AiocqhttpMessageEvent,
@@ -497,8 +502,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_portrait(event, image_url=image_url)
 
-    @llm_guarded_for("llm_send_group_notice")
     @filter.llm_tool()
+    @llm_guarded_for("llm_send_group_notice")
     async def llm_send_group_notice(
         self,
         event: AiocqhttpMessageEvent,
@@ -513,8 +518,8 @@ class QQAdminPlugin(Star):
         """
         return await self.notice.send_group_notice(event, content=content, image_url=image_url)
 
-    @llm_guarded_for("llm_get_group_notice")
     @filter.llm_tool()
+    @llm_guarded_for("llm_get_group_notice")
     async def llm_get_group_notice(
         self,
         event: AiocqhttpMessageEvent,
@@ -525,8 +530,8 @@ class QQAdminPlugin(Star):
         """
         return await self.notice.get_group_notice(event)
 
-    @llm_guarded_for("llm_upload_group_file")
     @filter.llm_tool()
+    @llm_guarded_for("llm_upload_group_file")
     async def llm_upload_group_file(
         self,
         event: AiocqhttpMessageEvent,
@@ -539,8 +544,8 @@ class QQAdminPlugin(Star):
         """
         return await self.file.upload_group_file(event, path)
 
-    @llm_guarded_for("llm_delete_group_file")
     @filter.llm_tool()
+    @llm_guarded_for("llm_delete_group_file")
     async def llm_delete_group_file(
         self,
         event: AiocqhttpMessageEvent,
@@ -553,8 +558,8 @@ class QQAdminPlugin(Star):
         """
         return await self.file.delete_group_file(event, path)
 
-    @llm_guarded_for("llm_view_group_file")
     @filter.llm_tool()
+    @llm_guarded_for("llm_view_group_file")
     async def llm_view_group_file(
         self,
         event: AiocqhttpMessageEvent,

@@ -58,8 +58,25 @@ async def resolve_block_ids(db, global_list, gid: str) -> list:
 
 
 def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
-    """获取被at者们的id列表"""
-    return [str(seg.qq) for seg in event.get_messages() if (isinstance(seg, At) and str(seg.qq) != event.get_self_id())]
+    """获取被 at 者们的 id 列表（排除 Bot 自身与 @全体成员）"""
+    return [
+        str(seg.qq)
+        for seg in event.get_messages()
+        if isinstance(seg, At) and str(seg.qq) not in {str(event.get_self_id()), "all"}
+    ]
+
+
+def is_group_admin(event: AiocqhttpMessageEvent) -> bool:
+    """群主/管理员判定。
+
+    部分 AstrBot 版本不会把 OneBot sender.role 写回 event.role，导致
+    `event.is_admin()` 在 aiocqhttp 下恒为 False；这里直接读原始事件里的
+    sender.role，避免把管理员的发言当成刷屏/违禁词误处理。
+    """
+    raw = getattr(event.message_obj, "raw_message", None)
+    sender = raw.get("sender") if isinstance(raw, dict) else None
+    role = str((sender or {}).get("role", "")).lower()
+    return role in {"owner", "admin"}
 
 
 def get_reply_message_str(event: AiocqhttpMessageEvent) -> str | None:

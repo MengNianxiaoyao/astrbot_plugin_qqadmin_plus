@@ -24,8 +24,11 @@ class FileHandle:
 
     @staticmethod
     def _list_of(response, key: str) -> list:
-        """容错取出响应中的文件夹/文件列表"""
+        """容错取出响应中的文件夹/文件列表（兼容 {"data": {...}} 包裹）"""
         if isinstance(response, dict):
+            data = response.get("data")
+            if isinstance(data, dict):
+                response = data
             items = response.get(key, [])
             if isinstance(items, list):
                 return [f for f in items if isinstance(f, dict)]
@@ -162,9 +165,10 @@ class FileHandle:
     async def _save_temp_file(self, event: AiocqhttpMessageEvent, file_name: str):
         """获取文件URL并下载，返回保存路径"""
         chain = event.message_obj.message
-        reply_chain = chain[0].chain if chain and isinstance(chain[0], Reply) else None
-        seg = reply_chain[0] if reply_chain else None
-        if seg and isinstance(seg, File | Image | Video):
+        reply_seg = next((item for item in chain if isinstance(item, Reply)), None)
+        reply_chain = reply_seg.chain if reply_seg else None
+        seg = next((item for item in (reply_chain or []) if isinstance(item, File | Image | Video)), None)
+        if seg:
             if url := getattr(seg, "url", None) or getattr(seg, "file", None):
                 logger.info(f"正在从URL下载文件：{url}")
                 # 文件名可能源自用户输入：取 basename 并清洗，杜绝 '..' 路径穿越逃出 data_dir
@@ -193,10 +197,10 @@ class FileHandle:
 
         # 清理非法字符
         safe_name = re.sub(r"[\\/:*?\"<>|]", "", folder_name)[:30]
+        # NapCat 主字段为 name，folder_name 仅作兼容；go-cqhttp 无此扩展接口
         await client.create_group_file_folder(
             group_id=group_id,
-            folder_name=safe_name,
-            parent_id="/",
+            name=safe_name,
         )
         # 再次获取，确保拿到 folder_id
         return await self._get_folder(event, safe_name)
@@ -222,13 +226,16 @@ class FileHandle:
                 return f"群文件夹【{folder_name}】创建或查找失败，已取消上传"
             folder_id = target_folder["folder_id"]
 
+        upload_kwargs = {
+            "group_id": group_id,
+            "file": str(file_path),
+            "name": file_name,
+        }
+        if folder_id:
+            # go-cqhttp 标准字段是 folder；NapCat 同时兼容 folder_id
+            upload_kwargs["folder"] = folder_id
         try:
-            await client.upload_group_file(
-                group_id=group_id,
-                file=str(file_path),
-                name=file_name,
-                folder_id=folder_id,
-            )
+            await client.upload_group_file(**upload_kwargs)
         except Exception as e:
             logger.error(f"上传群文件失败：{e}")
             return f"上传失败：{e}"
@@ -255,7 +262,10 @@ class FileHandle:
                     None,
                 )
             if file:
-                await event.bot.delete_group_file(group_id=group_id, file_id=file["file_id"])
+                payload = {"group_id": group_id, "file_id": file["file_id"]}
+                if file.get("busid"):
+                    payload["busid"] = file["busid"]
+                await event.bot.delete_group_file(**payload)
                 return f"已删除群文件：📄{file_name}"
 
         # 删除文件夹

@@ -38,17 +38,23 @@ class GroupCurfew:
                 return
             self.whole_ban_status = True
         try:
-            await self.bot.send_group_msg(
-                group_id=int(self.group_id),
-                message=f"【{self._start_time_str}】本群宵禁开始！",
-            )
             await self.bot.set_group_whole_ban(group_id=int(self.group_id), enable=True)
-            logger.info(f"群 {self.group_id} 已开启全体禁言")
         except Exception as e:
             logger.error(f"群 {self.group_id} 宵禁开启失败: {e}", exc_info=True)
             async with self._lock:
                 self.whole_ban_status = False
             # 临时异常不自动移除，保留任务以便下次重试
+            return
+
+        # 通知失败不应回滚已经生效的全员禁言
+        try:
+            await self.bot.send_group_msg(
+                group_id=int(self.group_id),
+                message=f"【{self._start_time_str}】本群宵禁开始！",
+            )
+        except Exception as e:
+            logger.warning(f"群 {self.group_id} 宵禁开始通知发送失败: {e}")
+        logger.info(f"群 {self.group_id} 已开启全体禁言")
 
     async def _disable_curfew(self):
         """关闭宵禁"""
@@ -57,16 +63,22 @@ class GroupCurfew:
                 return
             self.whole_ban_status = False
         try:
-            await self.bot.send_group_msg(
-                group_id=int(self.group_id),
-                message=f"【{self._end_time_str}】本群宵禁结束！",
-            )
             await self.bot.set_group_whole_ban(group_id=int(self.group_id), enable=False)
-            logger.info(f"群 {self.group_id} 已解除全体禁言")
         except Exception as e:
             logger.error(f"群 {self.group_id} 宵禁解除失败: {e}", exc_info=True)
             async with self._lock:
                 self.whole_ban_status = True
+            return
+
+        # 通知失败不应把群留在已禁言状态
+        try:
+            await self.bot.send_group_msg(
+                group_id=int(self.group_id),
+                message=f"【{self._end_time_str}】本群宵禁结束！",
+            )
+        except Exception as e:
+            logger.warning(f"群 {self.group_id} 宵禁结束通知发送失败: {e}")
+        logger.info(f"群 {self.group_id} 已解除全体禁言")
 
     async def start_curfew_task(self):
         """注册 APScheduler 定时任务"""

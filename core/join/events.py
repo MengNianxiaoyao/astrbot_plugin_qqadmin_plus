@@ -92,12 +92,18 @@ class JoinEvents:
         flag = raw.get("flag", "")
         # 登记本次申请，用于多群同时申请判定
         self.state.register_application(uid, gid, flag, await self._get_group_name(gid))
-        info = await client.get_stranger_info(user_id=int(uid)) or {}
+        try:
+            info = await client.get_stranger_info(user_id=int(uid)) or {}
+        except Exception as e:
+            logger.warning(f"获取申请人 {uid} 资料失败，转人工审核: {e}")
+            info = {}
         nickname = info.get("nickname") or "未知昵称"
-        if info.get("isHideQQLevel"):
-            level = None
-        else:
-            level = info.get("qqLevel") or info.get("level")
+        level = None if info.get("isHideQQLevel") else (info.get("qqLevel") or info.get("level"))
+        if level is not None:
+            try:
+                level = int(level)
+            except (TypeError, ValueError):
+                level = None
 
         # 判断是否通过（满群时直接拒绝，白名单也不放行）
         approve, reason, code = await self.reviewer.should_approve(gid, uid, comment, level, client=client)

@@ -16,7 +16,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from astrbot.core.utils.session_waiter import SessionController, session_waiter
 
 from ..data import QQAdminDB, QQAdminGlobalList
-from ..utils import format_time, get_nickname, resolve_allow_ids
+from ..utils import format_time, resolve_allow_ids
 
 # 确认清理阶段并发踢人的最大并发数
 KICK_CONCURRENCY = 8
@@ -77,7 +77,8 @@ class MemberHandle:
 
     @staticmethod
     def _format_member_line(member: dict) -> str:
-        return f"{format_time(_safe_int(member.get('join_time')))}：【{member.get('level', 0)}】{member.get('user_id', '?')}-{member.get('nickname') or '（无昵称）'}"
+        name = member.get("card") or member.get("nickname") or "（无昵称）"
+        return f"{format_time(_safe_int(member.get('join_time')))}：【{member.get('level', 0)}】{member.get('user_id', '?')}-{name}"
 
     # ============================== 群友信息 ==============================
 
@@ -97,11 +98,19 @@ class MemberHandle:
     # ============================== 清理群友 ==============================
 
     @staticmethod
-    def _collect_candidates(members: list, inactive_days: int, under_level: int, now_ts: int) -> list[_Candidate]:
-        """按活跃时间与等级筛出候选；从未发言时以入群时间为准，避免误清刚入群成员"""
+    def _collect_candidates(members: list, inactive_days: int, under_level: int, now_ts: int, self_id: str = "") -> list[_Candidate]:
+        """按活跃时间与等级筛出候选；从未发言时以入群时间为准，避免误清刚入群成员。
+
+        群主/管理员和 Bot 自身永远不会成为清理目标（即使接口返回的等级很低）。
+        """
         threshold_ts = now_ts - inactive_days * 86400
         candidates: list[_Candidate] = []
         for member in members:
+            user_id = str(member.get("user_id", ""))
+            if not user_id or user_id == self_id:
+                continue
+            if str(member.get("role", "")).lower() in {"owner", "admin"}:
+                continue
             last_sent = _safe_int(member.get("last_sent_time"))
             active_ts = last_sent if last_sent > 0 else _safe_int(member.get("join_time"))
             level = _safe_int(member.get("level"))
@@ -110,8 +119,8 @@ class MemberHandle:
                     _Candidate(
                         active_ts=active_ts,
                         level=level,
-                        user_id=str(member.get("user_id", "")),
-                        nickname=member.get("nickname") or "（无昵称）",
+                        user_id=user_id,
+                        nickname=member.get("card") or member.get("nickname") or "（无昵称）",
                         active_text=_last_active_text(last_sent, now_ts),
                     )
                 )
@@ -137,14 +146,12 @@ class MemberHandle:
         return title + "。\n发送「确认清理」执行，或「取消清理」放弃："
 
     async def _kick_one(self, event: AiocqhttpMessageEvent, group_id: str, semaphore: asyncio.Semaphore, candidate: _Candidate) -> bool:
-        name = candidate.nickname
         try:
             async with semaphore:
-                name = await get_nickname(event, user_id=candidate.user_id)
                 await event.bot.set_group_kick(group_id=int(group_id), user_id=int(candidate.user_id), reject_add_request=False)
                 return True
         except Exception as e:
-            logger.error(f"踢出 {name}({candidate.user_id}) 失败：{e}")
+            logger.error(f"踢出 {candidate.nickname}({candidate.user_id}) 失败：{e}")
             return False
 
     async def _kick_all(self, event: AiocqhttpMessageEvent, group_id: str, candidates: list[_Candidate]) -> tuple[int, int]:
@@ -204,7 +211,13 @@ class MemberHandle:
             if members is None:
                 return
 
-            candidates = self._collect_candidates(members, inactive_days, under_level, int(datetime.now().timestamp()))
+            candidates = self._collect_candidates(
+                members,
+                inactive_days,
+                under_level,
+                int(datetime.now().timestamp()),
+                self_id=str(event.get_self_id()),
+            )
             candidates, skipped = await self._filter_allowlist(group_id, candidates)
             if not candidates:
                 await event.send(event.plain_result(f"符合条件的 {skipped} 位均为白名单成员，已跳过" if skipped else "无符合条件的群友"))

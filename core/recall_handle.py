@@ -39,14 +39,14 @@ class RecallHandle:
             count = int(end_arg) if end_arg.isdigit() else 10
             count = max(1, min(count, 50))
 
+            # message_seq / reverse_order 在 go-cqhttp 与 NapCat 上兼容性不一致；
+            # 不传 message_seq 即取最近消息，顺序对“按发送者筛选撤回”没有影响。
             payloads = {
                 "group_id": int(event.get_group_id()),
-                "message_seq": 0,
                 "count": count,
-                "reverseOrder": True,
             }
             try:
-                result = await client.api.call_action("get_group_msg_history", **payloads)
+                result = await client.call_action("get_group_msg_history", **payloads)
             except Exception as e:
                 logger.warning(f"获取群聊消息记录失败: {e}")
                 await event.send(event.plain_result("获取群聊消息记录失败"))
@@ -56,6 +56,8 @@ class RecallHandle:
             raw_messages = []
             if isinstance(result, dict):
                 raw_messages = result.get("messages", []) or []
+            elif isinstance(result, list):
+                raw_messages = result
             messages = [m for m in raw_messages if isinstance(m, dict)]
             delete_count = 0
             sem = asyncio.Semaphore(10)
@@ -83,7 +85,7 @@ class RecallHandle:
             tasks = [try_delete(msg) for msg in messages]
             await asyncio.gather(*tasks)
 
-            await event.send(event.plain_result(f"已从{count}条消息中撤回{delete_count}条"))
+            await event.send(event.plain_result(f"已从{len(messages)}条消息中撤回{delete_count}条"))
             event.stop_event()
         else:
             await event.send(event.plain_result("用法：引用要撤回的消息，或 撤回 @群友 [数量]"))

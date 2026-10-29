@@ -89,11 +89,11 @@ def perm_required_for(method_name: str) -> Callable[..., Callable[..., AsyncGene
 def llm_guarded_for(llm_name: str) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., AsyncGenerator[Any, Any]]]:
     """Collapse the `llm_perm_block` preamble and emit-if-result into one gate.
 
-    Stack outside `@filter.llm_tool` so the tool schema still sees the raw
-    function::
+    必须写在 `@filter.llm_tool()` 内侧：`llm_tool` 在注册时就把当时的函数对象
+    存进工具表，之后再套在外层的装饰器不会生效（权限门禁会被绕过）::
 
-        @llm_guarded_for("llm_set_group_ban")
         @filter.llm_tool()
+        @llm_guarded_for("llm_set_group_ban")
         async def llm_set_group_ban(...):
             ...
             return await self.normal.set_group_ban(...)
@@ -103,7 +103,16 @@ def llm_guarded_for(llm_name: str) -> Callable[[Callable[..., Awaitable[Any]]], 
     def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., AsyncGenerator[Any, Any]]:
         @wraps(func)
         async def wrapper(plugin_instance: Any, event: Any, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, Any]:
-            if error := await perm_manager.llm_perm_block(event, perm_key=spec.perm_key, bot_perm=spec.bot_perm):
+            # LLM 工具直接给目标 QQ，没有 @/引用可解析；拿出来一起做等级校验，
+            # 否则管理员可借 LLM 对群主/其他管理员执行踢人、禁言等操作。
+            target_id = kwargs.get("user_id") or kwargs.get("target_id")
+            target_ids = [str(target_id)] if target_id else None
+            if error := await perm_manager.llm_perm_block(
+                event,
+                perm_key=spec.perm_key,
+                bot_perm=spec.bot_perm,
+                target_ids=target_ids,
+            ):
                 yield error
                 return
             if result := await func(plugin_instance, event, *args, **kwargs):
