@@ -103,7 +103,7 @@ class JoinReviewer:
         cleared = 0
         for uid in await asyncio.gather(*[_is_member(u) for u in uids]):
             if uid:
-                cleared += self.state.drop_pending(lambda k, r: r.get("gid") == gid and r.get("uid") == uid)
+                cleared += self.state.drop_pending(lambda k, r, uid=uid: r.get("gid") == gid and r.get("uid") == uid)
         return cleared
 
     async def _find_other_group(self, gid: str, uid: str, client=None) -> str | None:

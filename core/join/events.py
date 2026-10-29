@@ -77,7 +77,11 @@ class JoinEvents:
             # 非加群申请（如邀请入群）：本插件只处理主动申请
             logger.debug(f"忽略非主动加群请求: gid={gid} uid={uid} sub_type={raw.get('sub_type')}")
         # 主动退群事件
-        elif raw.get("post_type") == "notice" and raw.get("notice_type") == "group_decrease" and raw.get("sub_type") == "leave":
+        elif (
+            raw.get("post_type") == "notice"
+            and raw.get("notice_type") == "group_decrease"
+            and raw.get("sub_type") == "leave"
+        ):
             await self._on_leave(event, gid, uid)
         # 进群欢迎、禁言
         elif raw.get("notice_type") == "group_increase" and uid != event.get_self_id():
@@ -163,7 +167,9 @@ class JoinEvents:
                 platform_id = event.get_platform_id()
             except Exception:
                 platform_id = None
-            self.state.track_pending(mid, gid, uid, nickname, flag, platform_id, comment if isinstance(comment, str) else None)
+            self.state.track_pending(
+                mid, gid, uid, nickname, flag, platform_id, comment if isinstance(comment, str) else None
+            )
 
     async def _on_leave(self, event: AiocqhttpMessageEvent, gid: str, uid: str):
         should_block = await self.db.get(gid, "leave_block", False)

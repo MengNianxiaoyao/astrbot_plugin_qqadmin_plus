@@ -35,7 +35,9 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "cancel_group_ban": CommandSpec("group_ban", quote_target=True),
     "set_group_whole_ban": CommandSpec("whole_ban", llm_tool="llm_set_group_whole_ban"),
     "set_group_card": CommandSpec("set_group_card", llm_tool="llm_set_group_card", quote_target=True),
-    "set_group_special_title": CommandSpec("set_group_special_title", PermLevel.OWNER, llm_tool="llm_set_group_special_title", quote_target=True),
+    "set_group_special_title": CommandSpec(
+        "set_group_special_title", PermLevel.OWNER, llm_tool="llm_set_group_special_title", quote_target=True
+    ),
     "set_group_special_title_me": CommandSpec("set_group_special_title_me", PermLevel.OWNER),
     "set_group_kick": CommandSpec("set_group_kick", llm_tool="llm_set_group_kick", quote_target=True),
     "set_group_block": CommandSpec("set_group_block", llm_tool="llm_set_group_block", quote_target=True),
@@ -86,7 +88,9 @@ def perm_required_for(method_name: str) -> Callable[..., Callable[..., AsyncGene
     )
 
 
-def llm_guarded_for(llm_name: str) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., AsyncGenerator[Any, Any]]]:
+def llm_guarded_for(
+    llm_name: str,
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., AsyncGenerator[Any, Any]]]:
     """Collapse the `llm_perm_block` preamble and emit-if-result into one gate.
 
     必须写在 `@filter.llm_tool()` 内侧：`llm_tool` 在注册时就把当时的函数对象

@@ -42,7 +42,12 @@ class BotCurfewManager:
     async def _save(self):
         async with self._save_lock:
             self.bot_data.clear()
-            self.bot_data.update({gid: {"start_time": cw._start_time_str, "end_time": cw._end_time_str} for gid, cw in self.tasks.items()})
+            self.bot_data.update(
+                {
+                    gid: {"start_time": cw._start_time_str, "end_time": cw._end_time_str}
+                    for gid, cw in self.tasks.items()
+                }
+            )
             await self.store.save_async()
 
     async def enable_curfew(self, group_id: str, start_time: str, end_time: str):

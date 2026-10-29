@@ -81,7 +81,9 @@ class NormalHandle:
                     user_id=int(tid),
                     card=str(target_card),
                 )
-                results.append(f"已修改{target_name}的群昵称为【{target_card}】" if target_card else f"已清除{target_name}的群昵称")
+                results.append(
+                    f"已修改{target_name}的群昵称为【{target_card}】" if target_card else f"已清除{target_name}的群昵称"
+                )
             except Exception as e:
                 logger.warning(f"设置用户{tid}群昵称失败: {e}")
                 results.append(f"用户[{tid}]群昵称设置失败")
@@ -106,7 +108,9 @@ class NormalHandle:
                     special_title=str(special_title),
                     duration=-1,
                 )
-                results.append(f"已修改{target_name}的头衔为【{special_title}】" if special_title else f"已清除{target_name}的头衔")
+                results.append(
+                    f"已修改{target_name}的头衔为【{special_title}】" if special_title else f"已清除{target_name}的头衔"
+                )
             except Exception as e:
                 logger.warning(f"设置用户{tid}头衔失败: {e}")
                 results.append(f"用户[{tid}]头衔设置失败")

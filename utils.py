@@ -59,7 +59,11 @@ async def resolve_block_ids(db, global_list, gid: str) -> list:
 
 def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
     """获取被 at 者们的 id 列表（排除 Bot 自身与 @全体成员）"""
-    return [str(seg.qq) for seg in event.get_messages() if isinstance(seg, At) and str(seg.qq) not in {str(event.get_self_id()), "all"}]
+    return [
+        str(seg.qq)
+        for seg in event.get_messages()
+        if isinstance(seg, At) and str(seg.qq) not in {str(event.get_self_id()), "all"}
+    ]
 
 
 def is_group_admin(event: AiocqhttpMessageEvent) -> bool:
@@ -129,7 +133,9 @@ def format_time(timestamp):
     return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
 
 
-async def download_file(url: str, save_path: Path, max_size: int = 10 * 1024 * 1024, timeout_secs: int = 10) -> Path | None:
+async def download_file(
+    url: str, save_path: Path, max_size: int = 10 * 1024 * 1024, timeout_secs: int = 10
+) -> Path | None:
     """下载文件并保存到本地。优先使用原协议，失败后回退到另一种协议（http/https 互转）。带超时与大小限制。"""
     candidates = [url]
     if url.startswith("https://"):

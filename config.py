@@ -79,7 +79,9 @@ class ConfigNode:
                 children: dict[str, ConfigNode] = self.__dict__["_children"]
                 if key not in children:
                     if not isinstance(value, MutableMapping):
-                        raise TypeError(f"[config:{self.__class__.__name__}] 字段 {key} 期望 dict，实际是 {type(value).__name__}")
+                        raise TypeError(
+                            f"[config:{self.__class__.__name__}] 字段 {key} 期望 dict，实际是 {type(value).__name__}"
+                        )
                     children[key] = tp(value)
                 return children[key]
 
@@ -202,7 +204,9 @@ class PluginConfig(ConfigNode):
         schema_default = self.schema.get("default", {}).get("items", {})
         schema_perms = self.schema.get("perms", {}).get("items", {})
         if schema_default:
-            group_cfg = {key: copy.deepcopy(self.default.get(key, spec.get("default"))) for key, spec in schema_default.items()}
+            group_cfg = {
+                key: copy.deepcopy(self.default.get(key, spec.get("default"))) for key, spec in schema_default.items()
+            }
             perms = {key: self.perms.get(key, spec.get("default")) for key, spec in schema_perms.items()}
         else:
             # schema 缺失时退回原样合并，避免把所有群配置字段清空
@@ -227,7 +231,9 @@ class PluginConfig(ConfigNode):
         try:
             min_ban_time, max_ban_time = self._parse_ban_time_range(str(self.random_ban_time))
         except ValueError:
-            logger.warning(f"[config:{self.__class__.__name__}] random_ban_time 格式错误: {self.random_ban_time}，已回退到 30~300")
+            logger.warning(
+                f"[config:{self.__class__.__name__}] random_ban_time 格式错误: {self.random_ban_time}，已回退到 30~300"
+            )
             min_ban_time, max_ban_time = 30, 300
             self.random_ban_time = "30~300"
             try:

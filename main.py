@@ -61,12 +61,21 @@ class QQAdminPlugin(Star):
         self.member = MemberHandle(self.db, self.global_list)
         self.file = FileHandle(self.cfg)
         self.curfew = CurfewHandle(self.context, self.cfg)
-        self.web = QQAdminWebController(context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro, self.join.state)
+        self.web = QQAdminWebController(
+            context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro, self.join.state
+        )
         self.web.register_routes()
+        self._bg_tasks: set[asyncio.Task] = set()
+
+    def _spawn_bg_task(self, coro) -> None:
+        """保留后台任务引用，避免任务被垃圾回收。"""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     async def initialize(self):
         await self.db.init()
-        asyncio.create_task(self.curfew.initialize())
+        self._spawn_bg_task(self.curfew.initialize())
         perm_manager.lazy_init(self.cfg, self.db)
 
     async def terminate(self):
@@ -76,7 +85,7 @@ class QQAdminPlugin(Star):
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
         """平台加载完成时（已初始化的 Bot 会在内部跳过）"""
-        asyncio.create_task(self.curfew.initialize())
+        self._spawn_bg_task(self.curfew.initialize())
 
     # ---------- 基础群管：禁言 / 名片 / 头衔 / 踢 / 精华 / 撤回 / 公告 ----------
     @filter.command("禁言")

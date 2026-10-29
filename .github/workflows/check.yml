@@ -19,9 +19,10 @@ jobs:
       - name: Install UV
         run: pip install uv
       - name: Run checks
+        # 与本地保持一致：版本和 pyproject.toml 中的规则都以本地为准
         run: |
-          uvx --from ruff==0.15.22 ruff format .
-          uvx --from ruff==0.15.22 ruff check --fix .
+          uvx --from ruff==0.17.3 ruff format .
+          uvx --from ruff==0.17.3 ruff check --fix .
       - name: Commit changes
         id: commit
         uses: EndBug/add-and-commit@v9.1.4

@@ -262,7 +262,9 @@ class QQAdminWebController:
         list_type = payload.get("type", "")
         items = payload.get("items", [])
         result = await self.service.update_global_list(list_type, items)
-        return self._jsonify({"ok": True, "message": f"全局{'白名单' if list_type == 'allow' else '黑名单'}已更新", "data": result})
+        return self._jsonify(
+            {"ok": True, "message": f"全局{'白名单' if list_type == 'allow' else '黑名单'}已更新", "data": result}
+        )
 
     async def page_get_global_ban_words(self):
         return self._jsonify({"ok": True, "data": await self.service.get_global_ban_words()})
@@ -302,5 +304,7 @@ class QQAdminWebController:
 
     async def page_reject_pending(self):
         payload = await self._json_body()
-        message = await self.service.settle_pending(str(payload.get("key", "")), False, str(payload.get("reason", "") or ""))
+        message = await self.service.settle_pending(
+            str(payload.get("key", "")), False, str(payload.get("reason", "") or "")
+        )
         return self._jsonify({"ok": True, "message": message})

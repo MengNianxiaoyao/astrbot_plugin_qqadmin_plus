@@ -98,7 +98,9 @@ class MemberHandle:
     # ============================== 清理群友 ==============================
 
     @staticmethod
-    def _collect_candidates(members: list, inactive_days: int, under_level: int, now_ts: int, self_id: str = "") -> list[_Candidate]:
+    def _collect_candidates(
+        members: list, inactive_days: int, under_level: int, now_ts: int, self_id: str = ""
+    ) -> list[_Candidate]:
         """按活跃时间与等级筛出候选；从未发言时以入群时间为准，避免误清刚入群成员。
 
         群主/管理员和 Bot 自身永远不会成为清理目标（即使接口返回的等级很低）。
@@ -136,7 +138,9 @@ class MemberHandle:
 
     @staticmethod
     def _format_candidates(candidates: list[_Candidate]) -> list[str]:
-        return [f"{idx}. {c.nickname}({c.user_id})｜{c.level}级｜{c.active_text}" for idx, c in enumerate(candidates, 1)]
+        return [
+            f"{idx}. {c.nickname}({c.user_id})｜{c.level}级｜{c.active_text}" for idx, c in enumerate(candidates, 1)
+        ]
 
     @staticmethod
     def _build_title(candidates: list[_Candidate], skipped: int, inactive_days: int, under_level: int) -> str:
@@ -145,23 +149,31 @@ class MemberHandle:
             title += f"，已跳过 {skipped} 位白名单"
         return title + "。\n发送「确认清理」执行，或「取消清理」放弃："
 
-    async def _kick_one(self, event: AiocqhttpMessageEvent, group_id: str, semaphore: asyncio.Semaphore, candidate: _Candidate) -> bool:
+    async def _kick_one(
+        self, event: AiocqhttpMessageEvent, group_id: str, semaphore: asyncio.Semaphore, candidate: _Candidate
+    ) -> bool:
         try:
             async with semaphore:
-                await event.bot.set_group_kick(group_id=int(group_id), user_id=int(candidate.user_id), reject_add_request=False)
+                await event.bot.set_group_kick(
+                    group_id=int(group_id), user_id=int(candidate.user_id), reject_add_request=False
+                )
                 return True
         except Exception as e:
             logger.error(f"踢出 {candidate.nickname}({candidate.user_id}) 失败：{e}")
             return False
 
-    async def _kick_all(self, event: AiocqhttpMessageEvent, group_id: str, candidates: list[_Candidate]) -> tuple[int, int]:
+    async def _kick_all(
+        self, event: AiocqhttpMessageEvent, group_id: str, candidates: list[_Candidate]
+    ) -> tuple[int, int]:
         """并发踢人，返回（成功数, 失败数）"""
         semaphore = asyncio.Semaphore(KICK_CONCURRENCY)
         results = await asyncio.gather(*[self._kick_one(event, group_id, semaphore, c) for c in candidates])
         succeeded = sum(results)
         return succeeded, len(results) - succeeded
 
-    async def _confirm_and_kick(self, event: AiocqhttpMessageEvent, group_id: str, sender_id: str, candidates: list[_Candidate]) -> None:
+    async def _confirm_and_kick(
+        self, event: AiocqhttpMessageEvent, group_id: str, sender_id: str, candidates: list[_Candidate]
+    ) -> None:
         """等待“确认清理/取消清理”，确认后执行踢人并回执汇总"""
 
         @session_waiter(timeout=60)  # type: ignore
@@ -191,7 +203,9 @@ class MemberHandle:
         finally:
             event.stop_event()
 
-    async def clear_group_member(self, event: AiocqhttpMessageEvent, inactive_days: int | None = None, under_level: int | None = None):
+    async def clear_group_member(
+        self, event: AiocqhttpMessageEvent, inactive_days: int | None = None, under_level: int | None = None
+    ):
         """清理群友 [未发言天数] [群等级]，缺省用本群配置"""
         group_id = event.get_group_id()
         lock = self._get_clear_lock(group_id)
@@ -220,9 +234,17 @@ class MemberHandle:
             )
             candidates, skipped = await self._filter_allowlist(group_id, candidates)
             if not candidates:
-                await event.send(event.plain_result(f"符合条件的 {skipped} 位均为白名单成员，已跳过" if skipped else "无符合条件的群友"))
+                await event.send(
+                    event.plain_result(
+                        f"符合条件的 {skipped} 位均为白名单成员，已跳过" if skipped else "无符合条件的群友"
+                    )
+                )
                 return
 
             candidates.sort(key=lambda c: c.active_ts)
-            await self._send_text(event, self._build_title(candidates, skipped, inactive_days, under_level), self._format_candidates(candidates))
+            await self._send_text(
+                event,
+                self._build_title(candidates, skipped, inactive_days, under_level),
+                self._format_candidates(candidates),
+            )
             await self._confirm_and_kick(event, group_id, sender_id, candidates)

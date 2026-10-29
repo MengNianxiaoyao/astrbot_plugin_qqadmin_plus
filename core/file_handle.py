@@ -64,12 +64,14 @@ class FileHandle:
             left, right = path.split("/", 1)
 
             # 先解析左边文件夹
-            folder_kind, folder_name = resolve_index(left, "folder")
+            _, folder_name = resolve_index(left, "folder")
             folder_name = folder_name or left  # 左边不是数字就直接当字符串用
 
             # 如果右边是数字，需要进入对应文件夹再解析（复用已拉取的 response 避免二次请求）
             if right.isdigit() and folder_name:
-                target_folder = next((f for f in self._list_of(response, "folders") if f.get("folder_name") == folder_name), None)
+                target_folder = next(
+                    (f for f in self._list_of(response, "folders") if f.get("folder_name") == folder_name), None
+                )
                 if target_folder:
                     folder_files = await event.bot.get_group_files_by_folder(
                         group_id=int(event.get_group_id()),
@@ -145,7 +147,9 @@ class FileHandle:
         if upload_time := file.get("upload_time", 0):
             lines.append(f"上传时间：{datetime.fromtimestamp(upload_time).strftime('%Y-%m-%d %H:%M:%S')}")
         dead_time = file.get("dead_time", 0)
-        lines.append(f"过期时间：{'永久有效' if dead_time == 0 else datetime.fromtimestamp(dead_time).strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(
+            f"过期时间：{'永久有效' if dead_time == 0 else datetime.fromtimestamp(dead_time).strftime('%Y-%m-%d %H:%M:%S')}"
+        )
         if modify_time := file.get("modify_time", 0):
             lines.append(f"修改时间：{datetime.fromtimestamp(modify_time).strftime('%Y-%m-%d %H:%M:%S')}")
         logger.debug(f"文件ID：{file.get('file_id', '未知')}")
@@ -158,7 +162,9 @@ class FileHandle:
         target_folder = await self._get_folder(event, folder_name=folder_name)
         if not target_folder:
             return None, None
-        response = await event.bot.get_group_files_by_folder(group_id=int(event.get_group_id()), folder_id=target_folder["folder_id"])
+        response = await event.bot.get_group_files_by_folder(
+            group_id=int(event.get_group_id()), folder_id=target_folder["folder_id"]
+        )
         file = next((f for f in self._list_of(response, "files") if f.get("file_name") == file_name), None)
         return target_folder, file
 
@@ -298,7 +304,9 @@ class FileHandle:
         if folder_name and not file_name:
             target_folder = await self._get_folder(event, folder_name)
             if target_folder:
-                response = await client.get_group_files_by_folder(group_id=group_id, folder_id=target_folder["folder_id"])
+                response = await client.get_group_files_by_folder(
+                    group_id=group_id, folder_id=target_folder["folder_id"]
+                )
                 text, _ = self._get_folder_info(response, f"【{folder_name}】")
                 return text
             else:

@@ -92,7 +92,11 @@ class PermissionManager:
         user_level = await self.get_perm_level(event, user_id=event.get_sender_id())
 
         # 未指定权限，则默认至少需要管理员权限
-        group_config = self.db.get_group_snapshot(event.get_group_id()) if self.db is not None else {"perms": self.cfg.perms if self.cfg else {}}
+        group_config = (
+            self.db.get_group_snapshot(event.get_group_id())
+            if self.db is not None
+            else {"perms": self.cfg.perms if self.cfg else {}}
+        )
         perms = group_config.get("perms", {})
         required_level = PermLevel.from_str(str(perms.get(perm_key, "管理员")))
         if required_level is None:
@@ -101,7 +105,6 @@ class PermissionManager:
 
         bot_level = await self.get_perm_level(event, user_id=event.get_self_id())
 
-        target_levels = []
         if target_ids is not None:
             # LLM 工具的目标由参数直接指定，没有 @/引用，需显式传入
             explicit_targets = target_ids
@@ -110,8 +113,7 @@ class PermissionManager:
             explicit_targets = get_target_ids(event) if check_quote else get_ats(event)
         else:
             explicit_targets = []
-        for target_id in explicit_targets:
-            target_levels.append(await self.get_perm_level(event, user_id=target_id))
+        target_levels = [await self.get_perm_level(event, user_id=target_id) for target_id in explicit_targets]
 
         return evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
 
@@ -205,7 +207,9 @@ def perm_required(
                 return
 
             # 判断权限
-            result = await perm_manager.perm_block(event, bot_perm=bot_perm, perm_key=actual_perm_key, check_at=check_at, check_quote=check_quote)
+            result = await perm_manager.perm_block(
+                event, bot_perm=bot_perm, perm_key=actual_perm_key, check_at=check_at, check_quote=check_quote
+            )
             if result:
                 yield event.plain_result(result)
                 event.stop_event()
