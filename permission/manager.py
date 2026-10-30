@@ -18,7 +18,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ..config import PluginConfig
 from ..data import QQAdminDB
-from ..utils import get_ats
+from ..utils import get_ats, get_target_ids
 from .levels import PermLevel, evaluate_perm
 
 
@@ -86,11 +86,17 @@ class PermissionManager:
         bot_perm: PermLevel,
         perm_key: str,
         check_at: bool = True,
+        check_quote: bool = False,
+        target_ids: list[str] | None = None,
     ) -> str | None:
         user_level = await self.get_perm_level(event, user_id=event.get_sender_id())
 
         # 未指定权限，则默认至少需要管理员权限
-        group_config = self.db.get_group_snapshot(event.get_group_id()) if self.db is not None else {"perms": self.cfg.perms if self.cfg else {}}
+        group_config = (
+            self.db.get_group_snapshot(event.get_group_id())
+            if self.db is not None
+            else {"perms": self.cfg.perms if self.cfg else {}}
+        )
         perms = group_config.get("perms", {})
         required_level = PermLevel.from_str(str(perms.get(perm_key, "管理员")))
         if required_level is None:
@@ -99,10 +105,15 @@ class PermissionManager:
 
         bot_level = await self.get_perm_level(event, user_id=event.get_self_id())
 
-        target_levels = []
-        if check_at:
-            for at_id in get_ats(event):
-                target_levels.append(await self.get_perm_level(event, user_id=at_id))
+        if target_ids is not None:
+            # LLM 工具的目标由参数直接指定，没有 @/引用，需显式传入
+            explicit_targets = target_ids
+        elif check_at:
+            # 引用目标只在“目标可由引用指定”的命令里参与校验，避免无关命令回复消息就被拦
+            explicit_targets = get_target_ids(event) if check_quote else get_ats(event)
+        else:
+            explicit_targets = []
+        target_levels = [await self.get_perm_level(event, user_id=target_id) for target_id in explicit_targets]
 
         return evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
 
@@ -111,6 +122,7 @@ class PermissionManager:
         event: AiocqhttpMessageEvent,
         perm_key: str,
         bot_perm: PermLevel = PermLevel.ADMIN,
+        target_ids: list[str] | None = None,
     ) -> str | None:
         if event.platform_meta.name != "aiocqhttp":
             return "该工具仅支持通过 QQ 群聊调用"
@@ -130,6 +142,7 @@ class PermissionManager:
             bot_perm=bot_perm,
             perm_key=perm_key,
             check_at=False,
+            target_ids=target_ids,
         )
 
 
@@ -141,6 +154,7 @@ def perm_required(
     perm_key: str | None = None,
     check_at: bool = True,
     allow_private: bool = False,
+    check_quote: bool = False,
 ):
     """
     权限检查装饰器。
@@ -148,6 +162,7 @@ def perm_required(
     :param bot_perm: Bot 执行此命令所需的最低权限等级。
     :param check_at: 是否检查“是否有权对被@者实施操作”。
     :param allow_private: 超管是否可在私聊中使用该命令；默认 False，私聊一律拒绝。
+    :param check_quote: @ 为空时，是否把被引用消息的发送者当作操作目标一起校验。
     """
 
     def decorator(
@@ -192,7 +207,9 @@ def perm_required(
                 return
 
             # 判断权限
-            result = await perm_manager.perm_block(event, bot_perm=bot_perm, perm_key=actual_perm_key, check_at=check_at)
+            result = await perm_manager.perm_block(
+                event, bot_perm=bot_perm, perm_key=actual_perm_key, check_at=check_at, check_quote=check_quote
+            )
             if result:
                 yield event.plain_result(result)
                 event.stop_event()

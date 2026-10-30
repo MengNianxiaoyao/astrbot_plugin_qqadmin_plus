@@ -317,28 +317,6 @@
     "hint": "设置各个命令的使用权限",
     "type": "object",
     "items": {
-      "set_config": {
-        "description": "群管配置",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "管理员"
-      },
-      "reset_config": {
-        "description": "群管重置",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "管理员"
-      },
       "group_ban": {
         "description": "禁言与解禁",
         "hint": "包括：单独禁言、单独解禁",
@@ -508,30 +486,6 @@
         ],
         "default": "管理员"
       },
-      "word_ban": {
-        "description": "禁词指令",
-        "hint": "包括：禁词禁言、设置禁词、内置禁词",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "管理员"
-      },
-      "handle_builtin_ban_words": {
-        "description": "刷屏禁言指令",
-        "hint": "包括：刷屏禁言",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "管理员"
-      },
       "vote": {
         "description": "投票指令",
         "hint": "包括：投票禁言、赞同禁言、反对禁言、投票踢人、赞同踢人、反对踢人、取消投票",
@@ -556,44 +510,8 @@
         ],
         "default": "管理员"
       },
-      "join": {
-        "description": "进群审核指令",
-        "hint": "包括：进群审核开关、进群白词、进群黑词、进群等级、进群尝试次数、未命中白词自动拒绝、命中黑词拉黑、进群黑名单",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "管理员"
-      },
       "approve": {
         "description": "批准/驳回（进群申请）",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "管理员"
-      },
-      "welcome": {
-        "description": "进群欢迎与禁言",
-        "hint": "",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "管理员"
-      },
-      "leave": {
-        "description": "退群通知与拉黑",
-        "hint": "",
         "type": "string",
         "options": [
           "超管",

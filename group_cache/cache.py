@@ -125,7 +125,9 @@ class QQGroupInfoCache:
         if not normalized_group_id:
             return
 
-        self._group_list_cache = [item for item in self._group_list_cache if item.get("group_id") != normalized_group_id]
+        self._group_list_cache = [
+            item for item in self._group_list_cache if item.get("group_id") != normalized_group_id
+        ]
         self.invalidate(normalized_group_id)
         self._group_clients.pop(normalized_group_id, None)
         self._bot_role_cache.pop(normalized_group_id, None)
@@ -191,12 +193,16 @@ class QQGroupInfoCache:
             if not clients:
                 logger.warning("No aiocqhttp client available, skip QQ group list refresh and use cached groups only")
 
-            merged_groups, group_clients, missing_detail_group_ids, refresh_errors = await self._load_live_groups(clients)
+            merged_groups, group_clients, missing_detail_group_ids, refresh_errors = await self._load_live_groups(
+                clients
+            )
             self._add_db_fallbacks(merged_groups, missing_detail_group_ids)
 
             if with_details:
                 # 手动同步要求数据最新：列表接口的人数可能是缓存值，用实时详情全量校准
-                missing_detail_group_ids.update(group_id for group_id, group in merged_groups.items() if group.get("source") == "live")
+                missing_detail_group_ids.update(
+                    group_id for group_id, group in merged_groups.items() if group.get("source") == "live"
+                )
 
             if missing_detail_group_ids:
                 await self._hydrate_missing_groups(merged_groups, group_clients, missing_detail_group_ids)
@@ -275,7 +281,9 @@ class QQGroupInfoCache:
             logger.warning("Failed to load QQ group list via %s: %s", label, formatted)
             return client, [], f"{label}: {formatted}"
         items = extract_list(result)
-        if not items and not (isinstance(result, list) or (isinstance(result, dict) and isinstance(result.get("data"), list))):
+        if not items and not (
+            isinstance(result, list) or (isinstance(result, dict) and isinstance(result.get("data"), list))
+        ):
             logger.warning("QQ group list via %s returned unexpected result: %s", label, repr(result)[:500])
             return client, [], f"{label}：接口返回异常"
         return client, items, None
@@ -304,7 +312,11 @@ class QQGroupInfoCache:
             for group_id, client in group_clients.items():
                 if client is not None:
                     self._group_clients[group_id] = client
-            failed = [{"group_id": group_id, "group_name": merged_groups[group_id].get("group_name") or group_id} for group_id in failed_ids if group_id in merged_groups]
+            failed = [
+                {"group_id": group_id, "group_name": merged_groups[group_id].get("group_name") or group_id}
+                for group_id in failed_ids
+                if group_id in merged_groups
+            ]
             return list(merged_groups.values()), failed
 
     async def _hydrate_missing_groups(
@@ -368,7 +380,10 @@ class QQGroupInfoCache:
         preferred_client: Any | None = None,
     ) -> tuple[dict[str, Any] | None, Any | None]:
         clients = self._build_client_priority_list(preferred_client)
-        attempts = [(index, client, self._call_action(client, "get_group_info", group_id=int(group_id))) for index, client in enumerate(clients)]
+        attempts = [
+            (index, client, self._call_action(client, "get_group_info", group_id=int(group_id)))
+            for index, client in enumerate(clients)
+        ]
         return await self._fetch_first_valid(
             group_id,
             "fetch QQ group detail",
@@ -388,7 +403,11 @@ class QQGroupInfoCache:
                 group_id = str(group.get("group_id", "")).strip()
                 if not group_id:
                     return
-                if not force and group_id in self._bot_role_cache and (time.time() - self._bot_role_ts.get(group_id, 0)) < self.role_ttl_seconds:
+                if (
+                    not force
+                    and group_id in self._bot_role_cache
+                    and (time.time() - self._bot_role_ts.get(group_id, 0)) < self.role_ttl_seconds
+                ):
                     return
 
                 role, client = await self._fetch_bot_role(
@@ -426,7 +445,7 @@ class QQGroupInfoCache:
                     no_cache=True,
                 ),
             )
-            for index, (client, bot_id) in enumerate(zip(clients, bot_ids))
+            for index, (client, bot_id) in enumerate(zip(clients, bot_ids, strict=True))
             if bot_id and bot_id.isdigit()
         ]
         return await self._fetch_first_valid(

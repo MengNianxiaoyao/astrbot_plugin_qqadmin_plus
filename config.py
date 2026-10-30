@@ -10,6 +10,8 @@
   非法时回退 30~300 并写回。
 """
 
+import copy
+import json
 import random
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -77,7 +79,9 @@ class ConfigNode:
                 children: dict[str, ConfigNode] = self.__dict__["_children"]
                 if key not in children:
                     if not isinstance(value, MutableMapping):
-                        raise TypeError(f"[config:{self.__class__.__name__}] 字段 {key} 期望 dict，实际是 {type(value).__name__}")
+                        raise TypeError(
+                            f"[config:{self.__class__.__name__}] 字段 {key} 期望 dict，实际是 {type(value).__name__}"
+                        )
                     children[key] = tp(value)
                 return children[key]
 
@@ -129,6 +133,7 @@ class PluginConfig(ConfigNode):
 
         self.data_dir = StarTools.get_data_dir(self._plugin_name)
         self.plugin_dir = Path(get_astrbot_plugin_path()) / self._plugin_name
+        self.schema = self._load_schema()
 
         self.db_path = self.data_dir / f"qqadmin_data_v{self._db_version}.db"
         self.ban_lexicon_path = self.plugin_dir / "SensitiveLexicon.json"
@@ -182,25 +187,53 @@ class PluginConfig(ConfigNode):
             return random.randint(min_ban_time, max_ban_time)
         return min(max(seconds, 0), 2592000)
 
+    def _load_schema(self) -> dict[str, Any]:
+        """读取插件 _conf_schema.json（字段集合的唯一来源）。"""
+        try:
+            return json.loads((self.plugin_dir / "_conf_schema.json").read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"[config:{self.__class__.__name__}] 读取 _conf_schema.json 失败: {e}")
+            return {}
+
     def build_group_default_config(self) -> dict[str, Any]:
-        return {
-            **self.default,
-            "admin_audit": self.admin_audit,
-            "random_ban_time": self.random_ban_time,
-            "vote_ban": {
-                "ttl": self.vote_ban.ttl,
-                "threshold": self.vote_ban.threshold,
-            },
-            "llm_get_msg_count": self.llm_get_msg_count,
-            "perms": dict(self.perms),
-        }
+        """默认群模板：键集合以 schema 为准，值取当前配置。
+
+        以 schema 作为唯一键来源，删除字段后配置里残留的旧键不会继续出现在
+        模板中，数据库迁移据此清理历史行，后续增删改字段无需改代码。
+        """
+        schema_default = self.schema.get("default", {}).get("items", {})
+        schema_perms = self.schema.get("perms", {}).get("items", {})
+        if schema_default:
+            group_cfg = {
+                key: copy.deepcopy(self.default.get(key, spec.get("default"))) for key, spec in schema_default.items()
+            }
+            perms = {key: self.perms.get(key, spec.get("default")) for key, spec in schema_perms.items()}
+        else:
+            # schema 缺失时退回原样合并，避免把所有群配置字段清空
+            group_cfg = dict(self.default)
+            perms = dict(self.perms)
+        group_cfg.update(
+            {
+                "admin_audit": self.admin_audit,
+                "random_ban_time": self.random_ban_time,
+                "vote_ban": {
+                    "ttl": self.vote_ban.ttl,
+                    "threshold": self.vote_ban.threshold,
+                },
+                "llm_get_msg_count": self.llm_get_msg_count,
+                "perms": perms,
+            }
+        )
+        return group_cfg
 
     def refresh_runtime_settings(self) -> None:
         """刷新依赖配置的运行时缓存。"""
         try:
             min_ban_time, max_ban_time = self._parse_ban_time_range(str(self.random_ban_time))
         except ValueError:
-            logger.warning(f"[config:{self.__class__.__name__}] random_ban_time 格式错误: {self.random_ban_time}，已回退到 30~300")
+            logger.warning(
+                f"[config:{self.__class__.__name__}] random_ban_time 格式错误: {self.random_ban_time}，已回退到 30~300"
+            )
             min_ban_time, max_ban_time = 30, 300
             self.random_ban_time = "30~300"
             try:

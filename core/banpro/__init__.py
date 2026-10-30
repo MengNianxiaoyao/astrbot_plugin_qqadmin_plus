@@ -48,22 +48,10 @@ class BanproHandle:
     def restore_builtin_ban_words(self) -> list[str]:
         return self.lexicon.restore_builtin_ban_words()
 
-    async def handle_word_ban_time(self, event: AiocqhttpMessageEvent, time: int | None):
-        await self.lexicon.handle_word_ban_time(event, time)
-
-    async def handle_ban_words(self, event: AiocqhttpMessageEvent):
-        await self.lexicon.handle_ban_words(event)
-
-    async def handle_builtin_ban_words(self, event: AiocqhttpMessageEvent, mode_str: str | bool | None):
-        await self.lexicon.handle_builtin_ban_words(event, mode_str)
-
     async def on_ban_words(self, event: AiocqhttpMessageEvent):
         await self.lexicon.on_ban_words(event)
 
     # -----------刷屏-----------------
-
-    async def handle_spamming_ban_time(self, event: AiocqhttpMessageEvent, time: int | None):
-        await self.spam.handle_spamming_ban_time(event, time)
 
     async def spamming_ban(self, event: AiocqhttpMessageEvent):
         await self.spam.spamming_ban(event)

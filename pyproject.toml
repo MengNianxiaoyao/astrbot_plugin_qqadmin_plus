@@ -1,6 +1,8 @@
 [tool.ruff]
+# 本地与 CI 使用同一版本，避免格式化/规则差异
+required-version = "==0.17.3"
 target-version = "py312"
-line-length = 200
+line-length = 120
 
 [tool.ruff.lint]
 select = [
@@ -8,9 +10,14 @@ select = [
   "W",     # pycodestyle warnings
   "E",     # pycodestyle errors
   "ASYNC", # flake8-async
+  "B",     # flake8-bugbear
   "C4",    # flake8-comprehensions
+  "N",     # pep8-naming
+  "PERF",  # flake8-perf
   "Q",     # flake8-quotes
   "I",     # import-order
+  "RUF",   # Ruff-specific rules
+  "T20",   # flake8-print
   "UP",    # pyupgrade
   # "SIM", # flake8-simplify
 ]
@@ -18,4 +25,10 @@ ignore = [
   "F403",
   "F405",
   "E501",
+  # 中文注释/文档里的全角标点属于正常写法
+  "RUF001",
+  "RUF002",
+  "RUF003",
+  # 插件缓存/常量本身就是类级别共享状态
+  "RUF012",
 ]

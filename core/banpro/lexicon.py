@@ -1,4 +1,4 @@
-"""词表模块：内置/全局禁词文件 IO、违禁词配置命令与命中执法。"""
+"""词表模块：内置/全局禁词文件 IO 与命中执法。"""
 
 import json
 
@@ -9,11 +9,11 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ...config import PluginConfig
 from ...data import QQAdminDB
-from ...utils import parse_bool
+from ...utils import is_group_admin
 
 
 class LexiconStore:
-    """词表模块：内置/全局禁词文件 IO、违禁词配置命令与命中执法。"""
+    """词表模块：内置/全局禁词文件 IO 与命中执法。"""
 
     def __init__(self, config: PluginConfig, db: QQAdminDB):
         self.cfg = config
@@ -79,87 +79,25 @@ class LexiconStore:
                 return w
         return None
 
-    async def handle_word_ban_time(self, event: AiocqhttpMessageEvent, time: int | None):
-        """设置禁词禁言时长"""
-        gid = event.get_group_id()
-        if isinstance(time, int):
-            await self.db.set(gid, "word_ban_time", time)
-            msg = f"本群禁词禁言时长已设为：{time} 秒" if time > 0 else "本群禁词禁言已关闭"
-            await event.send(event.plain_result(msg))
-        else:
-            status = await self.db.get(gid, "word_ban_time", 0)
-            await event.send(event.plain_result(f"本群禁词禁言时长：{status} 秒"))
-
-    async def handle_ban_words(self, event: AiocqhttpMessageEvent):
-        """设置/查看违禁词"""
-        gid = event.get_group_id()
-        raw = event.message_str.partition(" ")[2]
-
-        # 1. 空指令：查看
-        if not raw:
-            words = await self.db.get(gid, "custom_ban_words", [])
-            await event.send(event.plain_result(f"本群违禁词：{words}"))
-            return
-
-        # 2. 纯单词列表（无 +/-）：整表覆写
-        toks = raw.split()
-        if all(not tok.startswith(("+", "-")) for tok in toks):
-            await self.db.set(gid, "custom_ban_words", toks)
-            await event.send(event.plain_result(f"本群违禁词已覆写为：{' '.join(toks)}"))
-            return
-
-        # 3. 增量模式：+word / -word
-        curr = set(await self.db.get(gid, "custom_ban_words", []))
-        added, removed = [], []
-
-        for tok in toks:
-            if tok.startswith("+") and len(tok) > 1:
-                w = tok[1:]
-                if w not in curr:
-                    curr.add(w)
-                    added.append(w)
-            elif tok.startswith("-") and len(tok) > 1:
-                w = tok[1:]
-                if w in curr:
-                    curr.discard(w)
-                    removed.append(w)
-
-        await self.db.set(gid, "custom_ban_words", list(curr))
-
-        reply = ["本群违禁词"]
-        if added:
-            reply.append(f"新增：{'、'.join(added)}")
-        if removed:
-            reply.append(f"移除：{'、'.join(removed)}")
-        if not added and not removed:
-            reply.append("无变动")
-        await event.send(event.plain_result("\n".join(reply)))
-
-    async def handle_builtin_ban_words(self, event: AiocqhttpMessageEvent, mode_str: str | bool | None):
-        """启用/停用全局违禁词"""
-        gid = event.get_group_id()
-        mode = parse_bool(mode_str)
-
-        if isinstance(mode, bool):
-            await self.db.set(gid, "builtin_ban", mode)
-            await event.send(event.plain_result(f"本群全局禁词：{mode}"))
-        else:
-            status = await self.db.get(gid, "builtin_ban", False)
-            await event.send(event.plain_result(f"本群全局禁词：{status}"))
-
     async def on_ban_words(self, event: AiocqhttpMessageEvent):
-        """检测禁词并撤回消息、禁言用户"""
+        """检测禁词并撤回消息、禁言用户；管理/超管发言不处理。"""
+        sender_id = str(event.get_sender_id())
+        if sender_id in self.cfg.admins_id or is_group_admin(event):
+            return
+
         gid = event.get_group_id()
         snapshot = self.db.get_group_snapshot(gid)
 
         # 检测自定义的违禁词
         if ban_words := snapshot.get("custom_ban_words", []):
             if await self.check_ban_words(event, ban_words):
+                event.stop_event()
                 return
 
         # 检测内置违禁词
         if snapshot.get("builtin_ban", False):
             if await self.check_ban_words(event, self.global_ban_words):
+                event.stop_event()
                 return
 
     async def check_ban_words(self, event: AiocqhttpMessageEvent, ban_words: list[str]) -> bool:

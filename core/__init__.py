@@ -8,8 +8,8 @@ from .notice_handle import NoticeHandle
 from .recall_handle import RecallHandle
 
 __all__ = [
-    "CurfewHandle",
     "BanproHandle",
+    "CurfewHandle",
     "FileHandle",
     "JoinHandle",
     "MemberHandle",

@@ -37,6 +37,7 @@ class CurfewHandle:
         self.store = CurfewStore(config.curfew_file)
         self.store.load()
         self.curfew_managers: dict[str, BotCurfewManager] = {}
+        self._init_lock = asyncio.Lock()
 
     async def _initialize_aiocqhttp_adapter(self, inst: AiocqhttpAdapter):
         """初始化单个 AiocqhttpAdapter 的宵禁管理器"""
@@ -76,6 +77,9 @@ class CurfewHandle:
                 logger.warning(f"{inst.metadata.id} 等待 WebSocket 连接超时")
                 return
 
+        if bot_id in self.curfew_managers:
+            return
+
         # 宵禁初始化
         try:
             self.store.data.setdefault(bot_id, {})
@@ -87,12 +91,17 @@ class CurfewHandle:
             logger.error(f"{inst.metadata.id} 宵禁初始化失败: {e}")
 
     async def initialize(self):
-        tasks = [self._initialize_aiocqhttp_adapter(inst) for inst in self.context.platform_manager.platform_insts if isinstance(inst, AiocqhttpAdapter)]
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.error(f"宵禁初始化子任务异常: {r}")
+        async with self._init_lock:
+            tasks = [
+                self._initialize_aiocqhttp_adapter(inst)
+                for inst in self.context.platform_manager.platform_insts
+                if isinstance(inst, AiocqhttpAdapter)
+            ]
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for r in results:
+                    if isinstance(r, Exception):
+                        logger.error(f"宵禁初始化子任务异常: {r}")
 
     @staticmethod
     def parse_time(time_str: str) -> tuple[str, int, int] | None:
@@ -149,8 +158,13 @@ class CurfewHandle:
             return "本群没有宵禁任务"
 
     async def stop_all_tasks(self):
-        for _, curfew_mgr in self.curfew_managers.items():
+        for curfew_mgr in self.curfew_managers.values():
             for cw in list(curfew_mgr.tasks.values()):
                 cw.stop_curfew_task()
             curfew_mgr.tasks.clear()
+        try:
+            if self.scheduler.running:
+                self.scheduler.shutdown(wait=False)
+        except Exception as e:
+            logger.debug(f"关闭宵禁调度器失败（可能已关闭）: {e}")
         await self.store.save_async()

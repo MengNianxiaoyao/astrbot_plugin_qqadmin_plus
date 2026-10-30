@@ -77,7 +77,11 @@ class JoinEvents:
             # 非加群申请（如邀请入群）：本插件只处理主动申请
             logger.debug(f"忽略非主动加群请求: gid={gid} uid={uid} sub_type={raw.get('sub_type')}")
         # 主动退群事件
-        elif raw.get("post_type") == "notice" and raw.get("notice_type") == "group_decrease" and raw.get("sub_type") == "leave":
+        elif (
+            raw.get("post_type") == "notice"
+            and raw.get("notice_type") == "group_decrease"
+            and raw.get("sub_type") == "leave"
+        ):
             await self._on_leave(event, gid, uid)
         # 进群欢迎、禁言
         elif raw.get("notice_type") == "group_increase" and uid != event.get_self_id():
@@ -92,12 +96,18 @@ class JoinEvents:
         flag = raw.get("flag", "")
         # 登记本次申请，用于多群同时申请判定
         self.state.register_application(uid, gid, flag, await self._get_group_name(gid))
-        info = await client.get_stranger_info(user_id=int(uid)) or {}
+        try:
+            info = await client.get_stranger_info(user_id=int(uid)) or {}
+        except Exception as e:
+            logger.warning(f"获取申请人 {uid} 资料失败，转人工审核: {e}")
+            info = {}
         nickname = info.get("nickname") or "未知昵称"
-        if info.get("isHideQQLevel"):
-            level = None
-        else:
-            level = info.get("qqLevel") or info.get("level")
+        level = None if info.get("isHideQQLevel") else (info.get("qqLevel") or info.get("level"))
+        if level is not None:
+            try:
+                level = int(level)
+            except (TypeError, ValueError):
+                level = None
 
         # 判断是否通过（满群时直接拒绝，白名单也不放行）
         approve, reason, code = await self.reviewer.should_approve(gid, uid, comment, level, client=client)
@@ -157,7 +167,9 @@ class JoinEvents:
                 platform_id = event.get_platform_id()
             except Exception:
                 platform_id = None
-            self.state.track_pending(mid, gid, uid, nickname, flag, platform_id, comment if isinstance(comment, str) else None)
+            self.state.track_pending(
+                mid, gid, uid, nickname, flag, platform_id, comment if isinstance(comment, str) else None
+            )
 
     async def _on_leave(self, event: AiocqhttpMessageEvent, gid: str, uid: str):
         should_block = await self.db.get(gid, "leave_block", False)

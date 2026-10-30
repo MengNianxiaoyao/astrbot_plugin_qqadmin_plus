@@ -53,7 +53,9 @@ def normalize_group_summary(raw_group: dict[str, Any]) -> dict[str, Any]:
 
 def needs_detail_refresh(raw_group: dict[str, Any], group_id: str) -> bool:
     # 真实群至少有机器人在内，人数全 0 即视为缺数，一并补详情自愈
-    missing_counts = not safe_int(raw_group.get("member_count"), 0) and not safe_int(raw_group.get("max_member_count"), 0)
+    missing_counts = not safe_int(raw_group.get("member_count"), 0) and not safe_int(
+        raw_group.get("max_member_count"), 0
+    )
     return not str(raw_group.get("group_name", "")).strip() or not group_id or missing_counts
 
 

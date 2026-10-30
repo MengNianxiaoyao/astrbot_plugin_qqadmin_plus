@@ -13,7 +13,6 @@
 """
 
 import asyncio
-import re
 
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star
@@ -37,10 +36,8 @@ from .core import (
 from .data import QQAdminDB, QQAdminGlobalList
 from .group_cache import QQGroupInfoCache
 from .permission import (
-    PermLevel,
     llm_guarded_for,
     perm_manager,
-    perm_required,
     perm_required_for,
 )
 from .utils import parse_bool
@@ -61,15 +58,24 @@ class QQAdminPlugin(Star):
         self.notice = NoticeHandle(self.cfg)
         self.banpro = BanproHandle(self.cfg, self.db)
         self.join = JoinHandle(self.cfg, self.db, self.global_list, self.group_cache)
-        self.member = MemberHandle(self.db, self.global_list, self.text_to_image)
+        self.member = MemberHandle(self.db, self.global_list)
         self.file = FileHandle(self.cfg)
         self.curfew = CurfewHandle(self.context, self.cfg)
-        self.web = QQAdminWebController(context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro, self.join.state)
+        self.web = QQAdminWebController(
+            context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro, self.join.state
+        )
         self.web.register_routes()
+        self._bg_tasks: set[asyncio.Task] = set()
+
+    def _spawn_bg_task(self, coro) -> None:
+        """保留后台任务引用，避免任务被垃圾回收。"""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     async def initialize(self):
         await self.db.init()
-        asyncio.create_task(self.curfew.initialize())
+        self._spawn_bg_task(self.curfew.initialize())
         perm_manager.lazy_init(self.cfg, self.db)
 
     async def terminate(self):
@@ -78,69 +84,35 @@ class QQAdminPlugin(Star):
 
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
-        """平台加载完成时"""
-        if not self.curfew.curfew_managers:
-            asyncio.create_task(self.curfew.initialize())
-
-    @filter.command("群管配置", alias={"群管设置"})
-    @perm_required(PermLevel.MEMBER, check_at=False, allow_private=True)
-    async def set_config(self, event: AiocqhttpMessageEvent):
-        """群管配置 <群号 | 留空> <配置串>"""
-        raw: str = event.message_str.partition(" ")[2].strip()
-        # 先解析目标群，跨群门禁统一提前：非超管只能操作本群
-        if not raw:
-            gid, arg = event.get_group_id(), None
-        elif m := re.match(r"(\d+)\s+(.+)", raw):
-            gid, arg = str(m.group(1)), m.group(2)
-        else:
-            gid, arg = event.get_group_id(), raw
-        if gid != event.get_group_id() and not event.is_admin():
-            yield event.plain_result("仅超管可查看/修改其他群的群管配置")
-            return
-        if arg is None:
-            config_str = await self.db.export_cn_lines(gid)
-            yield event.plain_result(f"【群管配置】\n{config_str}")
-            return
-        await self.db.import_cn_lines(gid, arg)
-        config_str = await self.db.export_cn_lines(gid)
-        yield event.plain_result(f"【群管配置】更新:\n{config_str}")
-
-    @filter.command("群管重置")
-    @perm_required(PermLevel.MEMBER, check_at=False, allow_private=True)
-    async def reset_config(self, event: AiocqhttpMessageEvent, group_id: str | int | None = None):
-        """群管重置 <群号 | all>"""
-        gid = group_id or event.get_group_id()
-        # 门禁统一提前：all 或他群一律要求超管（"all"恒不等于数字群号，天然落入跨群分支）
-        if str(gid) != event.get_group_id() and not event.is_admin():
-            reason = "所有群" if gid == "all" else "其他群"
-            yield event.plain_result(f"仅超管可重置{reason}的群管配置")
-            return
-        if gid == "all":
-            await self.db.reset_to_default()
-            yield event.plain_result("已重置所有群的群管配置")
-        else:
-            await self.db.reset_to_default(str(gid))
-            yield event.plain_result("已重置本群的群管配置")
+        """平台加载完成时（已初始化的 Bot 会在内部跳过）"""
+        self._spawn_bg_task(self.curfew.initialize())
 
     # ---------- 基础群管：禁言 / 名片 / 头衔 / 踢 / 精华 / 撤回 / 公告 ----------
     @filter.command("禁言")
     @perm_required_for("set_group_ban")
     async def set_group_ban(self, event: AiocqhttpMessageEvent, ban_time=None):
         """禁言 <秒数> @群友"""
-        await self.normal.set_group_ban(event, ban_time)
+        result = await self.normal.set_group_ban(event, ban_time)
+        if result:
+            yield event.plain_result(result)
+        event.stop_event()
 
     @filter.command("解禁")
     @perm_required_for("cancel_group_ban")
     async def cancel_group_ban(self, event: AiocqhttpMessageEvent):
         """解禁 @群友"""
-        await self.normal.set_group_ban(event, ban_time=0)
+        result = await self.normal.set_group_ban(event, ban_time=0)
+        if result:
+            yield event.plain_result(result)
+        event.stop_event()
 
     @filter.command("全禁", alias={"全员禁言", "群全员禁言"})
     @perm_required_for("set_group_whole_ban")
     async def set_group_whole_ban(self, event: AiocqhttpMessageEvent, enable: bool | str = True):
         """全禁 开/关, 开启或关闭群全员禁言"""
         enable = parse_bool(enable, default=True)
-        await self.normal.set_group_whole_ban(event, enable)
+        if result := await self.normal.set_group_whole_ban(event, enable):
+            yield event.plain_result(result)
 
     @filter.command("改名")
     @perm_required_for("set_group_card")
@@ -247,36 +219,11 @@ class QQAdminPlugin(Star):
             yield event.plain_result(result)
 
     # ---------- 违禁词 / 刷屏 / 投票 / 宵禁（业务在 core/banpro* 与 core/curfew*） ----------
-    @filter.command("禁词禁言")
-    @perm_required_for("handle_word_ban_time")
-    async def handle_word_ban_time(self, event: AiocqhttpMessageEvent, time: int | None = None):
-        """禁词禁言 <秒数>, 设为 0 表示关闭禁词检测"""
-        await self.banpro.handle_word_ban_time(event, time)
-
-    @filter.command("设置禁词", alias={"禁词", "违禁词"})
-    @perm_required_for("handle_ban_words")
-    async def handle_ban_words(self, event: AiocqhttpMessageEvent):
-        """禁词 +词1 -词2, 带+-则增删, 不带则覆写"""
-        await self.banpro.handle_ban_words(event)
-
-    @filter.command("全局禁词", alias={"内置禁词"})
-    @perm_required_for("handle_builtin_ban_words")
-    async def handle_builtin_ban_words(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
-        """全局禁词 开/关"""
-        await self.banpro.handle_builtin_ban_words(event, mode)
-
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
     async def on_ban_words(self, event: AiocqhttpMessageEvent):
-        """自动检测违禁词，撤回并禁言"""
-        if not event.is_admin():
-            await self.banpro.on_ban_words(event)
-
-    @filter.command("刷屏禁言")
-    @perm_required_for("handle_spamming_ban_time")
-    async def handle_spamming_ban_time(self, event: AiocqhttpMessageEvent, time: int | None = None):
-        """刷屏禁言 <秒数>, 设为 0 表示关闭禁词检测"""
-        await self.banpro.handle_spamming_ban_time(event, time)
+        """自动检测违禁词，撤回并禁言（管理员/超管豁免在 BanproHandle 内判断）"""
+        await self.banpro.on_ban_words(event)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
@@ -347,79 +294,7 @@ class QQAdminPlugin(Star):
         if result := await self.curfew.stop_curfew(event):
             yield event.plain_result(result)
 
-    # ---------- 进群审核 / 欢迎 / 退群（业务在 core/join/*） ----------
-    @filter.command("进群审核")
-    @perm_required_for("handle_join_review")
-    async def handle_join_review(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
-        "进群审核 开/关，所有进群审核功能的总开关"
-        await self.join.handle_join_review(event, mode)
-
-    @filter.command("进群白词")
-    @perm_required_for("handle_accept_words")
-    async def handle_accept_words(self, event: AiocqhttpMessageEvent):
-        "设置/查看自动批准进群的关键词（空格隔开，无参数表示查看）"
-        await self.join.handle_accept_words(event)
-
-    @filter.command("进群黑词")
-    @perm_required_for("handle_reject_words")
-    async def handle_reject_words(self, event: AiocqhttpMessageEvent):
-        "设置/查看进群黑名单关键词（空格隔开，无参数表示查看）"
-        await self.join.handle_reject_words(event)
-
-    @filter.command("未命中驳回")
-    @perm_required_for("handle_no_match_reject")
-    async def handle_no_match_reject(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
-        "设置/查看是否拒绝无关键词的进群申请（无参数表示查看）"
-        await self.join.handle_no_match_reject(event, mode)
-
-    @filter.command("群满拒绝")
-    @perm_required_for("handle_join_full_reject")
-    async def handle_join_full_reject(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
-        "设置/查看群满时是否自动拒绝进群申请（无参数表示查看）"
-        await self.join.handle_join_full_reject(event, mode)
-
-    @filter.command("群满文案")
-    @perm_required_for("handle_join_full_msg")
-    async def handle_join_full_msg(self, event: AiocqhttpMessageEvent):
-        "群满文案 <拒绝理由>"
-        await self.join.handle_join_full_msg(event)
-
-    @filter.command("待审核文案")
-    @perm_required_for("handle_join_pending_msg")
-    async def handle_join_pending_msg(self, event: AiocqhttpMessageEvent):
-        "待审核文案 <拒绝理由>，待审核申请超过剩余名额时驳回新申请的理由"
-        await self.join.handle_join_pending_msg(event)
-
-    @filter.command("待审核有效期")
-    @perm_required_for("handle_join_pending_ttl")
-    async def handle_join_pending_ttl(self, event: AiocqhttpMessageEvent, days: int | None = None):
-        "待审核有效期 <天数>，待审核申请保留天数（至少1天，无参数查看）"
-        await self.join.handle_join_pending_ttl(event, days)
-
-    @filter.command("进群等级")
-    @perm_required_for("handle_join_min_level")
-    async def handle_join_min_level(self, event: AiocqhttpMessageEvent, level: int | None = None):
-        "设置/查看本群进群等级门槛，（0表示不限制，无参数表示查看）"
-        await self.join.handle_join_min_level(event, level)
-
-    @filter.command("进群次数")
-    @perm_required_for("handle_join_max_time")
-    async def handle_join_max_time(self, event: AiocqhttpMessageEvent, time: int | None = None):
-        "设置/查看未命中进群关键词多少次后拉黑（0表示不限制，无参数表示查看）"
-        await self.join.handle_join_max_time(event, time)
-
-    @filter.command("进群白名单")
-    @perm_required_for("handle_allow_ids")
-    async def handle_allow_ids(self, event: AiocqhttpMessageEvent):
-        "进群白名单 +QQ -QQ, 带+-则增删, 不带则覆写"
-        await self.join.handle_allow_ids(event)
-
-    @filter.command("进群黑名单")
-    @perm_required_for("handle_reject_ids")
-    async def handle_reject_ids(self, event: AiocqhttpMessageEvent):
-        "进群黑名单 +QQ -QQ, 带+-则增删, 不带则覆写"
-        await self.join.handle_block_ids(event)
-
+    # ---------- 进群审批（业务在 core/join/*） ----------
     @filter.command("批准", alias={"同意进群"})
     @perm_required_for("agree_add_group")
     async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
@@ -431,42 +306,6 @@ class QQAdminPlugin(Star):
     async def refuse_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         "驳回进群申请"
         await self.join.refuse_add_group(event, extra)
-
-    @filter.command("进群禁言")
-    @perm_required_for("handle_join_ban")
-    async def handle_join_ban(self, event: AiocqhttpMessageEvent, time: int | None = None):
-        "进群禁言 <秒数>，设为 0 表示本群不启用该功能"
-        await self.join.handle_join_ban(event, time)
-
-    @filter.command("进群欢迎")
-    @perm_required_for("handle_join_welcome")
-    async def handle_join_welcome(self, event: AiocqhttpMessageEvent):
-        "进群欢迎 <欢迎语>"
-        await self.join.handle_join_welcome(event)
-
-    @filter.command("退群通知")
-    @perm_required_for("handle_leave_notify")
-    async def handle_leave_notify(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
-        """退群通知 开/关"""
-        await self.join.handle_leave_notify(event, mode)
-
-    @filter.command("退群拉黑")
-    @perm_required_for("handle_leave_block")
-    async def handle_leave_block(self, event: AiocqhttpMessageEvent, mode: str | bool | None = None):
-        "退群拉黑 开/关, 拉黑后下次进群直接自动拒绝"
-        await self.join.handle_leave_block(event, mode)
-
-    @filter.command("全局白名单")
-    @perm_required_for("handle_global_allow")
-    async def handle_global_allow(self, event: AiocqhttpMessageEvent):
-        "全局白名单 +QQ -QQ, 带+-则增删, 不带则覆写"
-        await self.join.handle_global_allow(event)
-
-    @filter.command("全局黑名单")
-    @perm_required_for("handle_global_block")
-    async def handle_global_block(self, event: AiocqhttpMessageEvent):
-        "全局黑名单 +QQ -QQ, 带+-则增删, 不带则覆写"
-        await self.join.handle_global_block(event)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
@@ -526,8 +365,8 @@ class QQAdminPlugin(Star):
             yield event.plain_result(result)
 
     # ---------- LLM 工具（门禁由 COMMAND_SPECS 的 llm_tool 列派生，业务与群聊命令复用同一 Handle） ----------
-    @llm_guarded_for("llm_set_group_ban")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_ban")
     async def llm_set_group_ban(
         self,
         event: AiocqhttpMessageEvent,
@@ -542,8 +381,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_ban(event, ban_time=duration, target_id=user_id)
 
-    @llm_guarded_for("llm_set_group_card")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_card")
     async def llm_set_group_card(
         self,
         event: AiocqhttpMessageEvent,
@@ -558,8 +397,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_card(event, target_id=target_id, target_card=target_card)
 
-    @llm_guarded_for("llm_set_group_special_title")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_special_title")
     async def llm_set_group_special_title(
         self,
         event: AiocqhttpMessageEvent,
@@ -574,8 +413,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_special_title(event, target_id=target_id, special_title=special_title)
 
-    @llm_guarded_for("llm_set_group_whole_ban")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_whole_ban")
     async def llm_set_group_whole_ban(
         self,
         event: AiocqhttpMessageEvent,
@@ -588,8 +427,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_whole_ban(event, enable)
 
-    @llm_guarded_for("llm_set_group_kick")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_kick")
     async def llm_set_group_kick(
         self,
         event: AiocqhttpMessageEvent,
@@ -602,8 +441,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_kick(event, target_id=target_id)
 
-    @llm_guarded_for("llm_set_group_block")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_block")
     async def llm_set_group_block(
         self,
         event: AiocqhttpMessageEvent,
@@ -616,8 +455,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_block(event, target_id=target_id)
 
-    @llm_guarded_for("llm_set_essence_msg")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_essence_msg")
     async def llm_set_essence_msg(
         self,
         event: AiocqhttpMessageEvent,
@@ -632,8 +471,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_essence_msg(event, enable=enable, message_id=message_id)
 
-    @llm_guarded_for("llm_get_essence_msg_list")
     @filter.llm_tool()
+    @llm_guarded_for("llm_get_essence_msg_list")
     async def llm_get_essence_msg_list(
         self,
         event: AiocqhttpMessageEvent,
@@ -644,8 +483,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.get_essence_msg_list(event)
 
-    @llm_guarded_for("llm_set_group_name")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_name")
     async def llm_set_group_name(
         self,
         event: AiocqhttpMessageEvent,
@@ -658,8 +497,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_name(event, group_name)
 
-    @llm_guarded_for("llm_set_group_portrait")
     @filter.llm_tool()
+    @llm_guarded_for("llm_set_group_portrait")
     async def llm_set_group_portrait(
         self,
         event: AiocqhttpMessageEvent,
@@ -672,8 +511,8 @@ class QQAdminPlugin(Star):
         """
         return await self.normal.set_group_portrait(event, image_url=image_url)
 
-    @llm_guarded_for("llm_send_group_notice")
     @filter.llm_tool()
+    @llm_guarded_for("llm_send_group_notice")
     async def llm_send_group_notice(
         self,
         event: AiocqhttpMessageEvent,
@@ -688,8 +527,8 @@ class QQAdminPlugin(Star):
         """
         return await self.notice.send_group_notice(event, content=content, image_url=image_url)
 
-    @llm_guarded_for("llm_get_group_notice")
     @filter.llm_tool()
+    @llm_guarded_for("llm_get_group_notice")
     async def llm_get_group_notice(
         self,
         event: AiocqhttpMessageEvent,
@@ -700,8 +539,8 @@ class QQAdminPlugin(Star):
         """
         return await self.notice.get_group_notice(event)
 
-    @llm_guarded_for("llm_upload_group_file")
     @filter.llm_tool()
+    @llm_guarded_for("llm_upload_group_file")
     async def llm_upload_group_file(
         self,
         event: AiocqhttpMessageEvent,
@@ -714,8 +553,8 @@ class QQAdminPlugin(Star):
         """
         return await self.file.upload_group_file(event, path)
 
-    @llm_guarded_for("llm_delete_group_file")
     @filter.llm_tool()
+    @llm_guarded_for("llm_delete_group_file")
     async def llm_delete_group_file(
         self,
         event: AiocqhttpMessageEvent,
@@ -728,8 +567,8 @@ class QQAdminPlugin(Star):
         """
         return await self.file.delete_group_file(event, path)
 
-    @llm_guarded_for("llm_view_group_file")
     @filter.llm_tool()
+    @llm_guarded_for("llm_view_group_file")
     async def llm_view_group_file(
         self,
         event: AiocqhttpMessageEvent,

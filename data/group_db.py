@@ -1,4 +1,4 @@
-"""按群配置库：SQLite 存 JSON + 跟随默认模板语义 + 中文行导入导出。"""
+"""按群配置库：SQLite 存 JSON + 跟随默认模板语义 + 按默认配置结构自动对齐。"""
 
 import asyncio
 import copy
@@ -8,7 +8,6 @@ import aiosqlite
 from astrbot.api import logger
 
 from ..config import PluginConfig
-from ..utils import parse_bool
 
 
 class QQAdminDB:
@@ -16,40 +15,6 @@ class QQAdminDB:
     群管插件数据库（极简 API + 动态字段 + 自动补齐）
     """
 
-    # ====================== 字段中英文映射 ======================
-    FIELD_MAP = {
-        "join_switch": "进群审核",
-        "join_min_level": "进群等级门槛",
-        "join_max_time": "进群尝试次数",
-        "join_accept_words": "进群白词",
-        "join_reject_words": "进群黑词",
-        "join_no_match_msg": "验证为空拒绝",
-        "join_no_match_reject": "未中白词拒绝",
-        "join_full_reject": "群满自动拒绝",
-        "join_full_msg": "群满拒绝文案",
-        "join_pending_msg": "待审核超限文案",
-        "join_pending_ttl": "待审核有效期",
-        "join_single_group": "禁止多群加入",
-        "join_silent_reasons": "免通知类型",
-        "reject_word_block": "命中黑词拉黑",
-        "allow_ids": "进群白名单",
-        "block_ids": "进群黑名单",
-        "join_welcome": "进群欢迎词",
-        "join_ban_time": "进群禁言时长",
-        "leave_notify": "主动退群通知",
-        "leave_block": "主动退群拉黑",
-        "builtin_ban": "启用全局禁词",
-        "custom_ban_words": "自定义违禁词",
-        "word_ban_time": "禁词禁言时长",
-        "spamming_ban_time": "刷屏禁言时长",
-        "clear_inactive_days": "清理未发言天数",
-        "clear_under_level": "清理等级阈值",
-        "clear_skip_allow": "清理跳过白名单",
-        "use_global_allow": "使用全局白名单",
-        "use_global_block": "使用全局黑名单",
-    }
-
-    REVERSE_FIELD_MAP = {v: k for k, v in FIELD_MAP.items()}
     FOLLOW_DEFAULT_MARKER = "__follow_default__"
 
     # ================================================================
@@ -106,6 +71,12 @@ class QQAdminDB:
                         await self._save_to_db(gid, record)
             await self._conn.commit()
 
+            # 按当前默认配置结构对齐历史行：补新增字段、删已废弃字段
+            # （含 perms 中被移除的旧权限键），一次性落库，之后读取时保持幂等。
+            for gid, record in list(self._cache.items()):
+                if isinstance(record, dict) and self._reconcile_group_data(record, self.default_cfg):
+                    await self._save_to_db(gid, record)
+
             self._initialized = True
             logger.info("QQAdminDB initialized (%d groups)", len(self._cache))
 
@@ -155,19 +126,23 @@ class QQAdminDB:
         base[self.FOLLOW_DEFAULT_MARKER] = False
         return base
 
-    def _fill_missing_defaults(self, data: dict) -> bool:
-        """补齐顶层配置和权限配置中的新增字段。"""
+    def _reconcile_group_data(self, data: dict, defaults: dict) -> bool:
+        """按默认配置的“形状”就地同步：补缺失键、删已废弃键，dict 递归下钻。
+
+        `defaults` 是唯一来源（顶层字段 + `perms`/`vote_ban` 等嵌套），
+        因此后续增删改配置字段只需改 `_conf_schema.json`，无需再动这里。
+        只调整结构，不覆盖已存在的值（默认值变化不会抹掉用户的显式配置）。
+        """
         changed = False
-        for key, default in self.default_cfg.items():
+        for key in [k for k in data if k != self.FOLLOW_DEFAULT_MARKER and k not in defaults]:
+            data.pop(key, None)
+            changed = True
+        for key, default in defaults.items():
             if key not in data:
                 data[key] = copy.deepcopy(default)
                 changed = True
-        default_perms = self.default_cfg.get("perms", {})
-        perms = data.setdefault("perms", {})
-        for key, value in default_perms.items():
-            if key not in perms:
-                perms[key] = copy.deepcopy(value)
-                changed = True
+            elif isinstance(default, dict) and isinstance(data[key], dict):
+                changed = self._reconcile_group_data(data[key], default) or changed
         return changed
 
     # ============================== 基础：确保配置存在 ==============================
@@ -194,7 +169,7 @@ class QQAdminDB:
             data = copy.deepcopy(self.default_cfg)
         else:
             data = self._strip_meta_fields(raw) or {}
-        self._fill_missing_defaults(data)
+        self._reconcile_group_data(data, self.default_cfg)
         return data
 
     # ============================== API ==============================
@@ -208,7 +183,7 @@ class QQAdminDB:
 
         data = self._cache[gid]
 
-        changed = self._fill_missing_defaults(data)
+        changed = self._reconcile_group_data(data, self.default_cfg)
 
         if data.get(self.FOLLOW_DEFAULT_MARKER) is not False:
             data[self.FOLLOW_DEFAULT_MARKER] = False
@@ -282,85 +257,6 @@ class QQAdminDB:
             self._conn = None
             self._initialized = False
 
-    # ====================== 中文展示、读回 ======================
-
-    async def export_cn_lines(self, gid: str) -> str:
-        """
-        以中文键名 + 多行文本形式输出群配置。
-        - 列表字段：用空格分隔
-        - 布尔：开 / 关
-        - 其它类型按原样输出
-        """
-        data = await self.all(gid)
-        lines = []
-
-        for eng_key, value in data.items():
-            cn_key = self.FIELD_MAP.get(eng_key, eng_key)
-
-            # 列表字段 => 用空格分隔
-            if isinstance(value, list):
-                val_str = " ".join(map(str, value))
-
-            # 布尔字段 => 显示 为“开 / 关”
-            elif isinstance(value, bool):
-                val_str = "开" if value else "关"
-
-            # 其他字段 => 按原样
-            else:
-                val_str = str(value)
-
-            lines.append(f"{cn_key}: {val_str}")
-
-        return "\n".join(lines)
-
-    async def import_cn_lines(self, gid: str, text: str) -> dict:
-        """
-        解析用户提交的中文多行文本并写回 DB
-        - 列表字段：空格分隔
-        - 布尔：开/关/开启/on/off/true/false/1/0
-        - 数字：自动转 int
-        - 字符串：原样保存
-        """
-        await self.ensure_group(gid)
-        data = self._cache[gid]
-
-        for line in text.splitlines():
-            if ":" not in line:
-                continue
-
-            cn_key, raw_v = line.split(":", 1)
-            cn_key = cn_key.strip()
-            raw_v = raw_v.strip()
-
-            eng_key = self.REVERSE_FIELD_MAP.get(cn_key)
-            if not eng_key:
-                continue
-
-            old_val = data.get(eng_key)
-
-            # bool 必须优先且独占分支，避免 bool 误入 int 分支
-            if isinstance(old_val, bool):
-                parsed = parse_bool(raw_v, default=None)
-                if parsed is not None:
-                    data[eng_key] = parsed
-                # 解析失败则保留原值，避免误写
-                continue
-            elif isinstance(old_val, list):
-                value = [x for x in raw_v.split() if x]
-            elif isinstance(old_val, int):
-                try:
-                    value = int(raw_v)
-                except ValueError:
-                    value = old_val  # 防错保底
-            else:
-                value = raw_v
-
-            data[eng_key] = value
-
-        async with self._write_lock:
-            await self._save_to_db(gid, data)
-        return self.get_group_snapshot(gid)
-
     async def follow_default(self, gid: str | None = None):
         """让指定群（或全部群）重新跟随默认群配置"""
         async with self._write_lock:
@@ -381,7 +277,3 @@ class QQAdminDB:
                 await self._conn.commit()
             self._cache.pop(normalized_gid, None)
         logger.info(f"群聊{normalized_gid}的群管配置已重新跟随默认值")
-
-    async def reset_to_default(self, gid: str | None = None):
-        """把指定群（或全部群）配置恢复成 default_cfg"""
-        await self.follow_default(gid)

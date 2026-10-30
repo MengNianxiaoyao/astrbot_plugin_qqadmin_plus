@@ -402,7 +402,9 @@ class QQAdminPageService:
         last_err: Exception | None = None
         for bot in self._resolve_qq_bots(entry.get("platform_id")):
             try:
-                await bot.set_group_add_request(flag=flag, sub_type="add", approve=approve, reason="" if approve else reason)
+                await bot.set_group_add_request(
+                    flag=flag, sub_type="add", approve=approve, reason="" if approve else reason
+                )
             except Exception as e:
                 err = str(e).lower()
                 if "already agree" in err or "already refuse" in err or "already disagree" in err:

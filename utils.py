@@ -58,8 +58,25 @@ async def resolve_block_ids(db, global_list, gid: str) -> list:
 
 
 def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
-    """获取被at者们的id列表"""
-    return [str(seg.qq) for seg in event.get_messages() if (isinstance(seg, At) and str(seg.qq) != event.get_self_id())]
+    """获取被 at 者们的 id 列表（排除 Bot 自身与 @全体成员）"""
+    return [
+        str(seg.qq)
+        for seg in event.get_messages()
+        if isinstance(seg, At) and str(seg.qq) not in {str(event.get_self_id()), "all"}
+    ]
+
+
+def is_group_admin(event: AiocqhttpMessageEvent) -> bool:
+    """群主/管理员判定。
+
+    部分 AstrBot 版本不会把 OneBot sender.role 写回 event.role，导致
+    `event.is_admin()` 在 aiocqhttp 下恒为 False；这里直接读原始事件里的
+    sender.role，避免把管理员的发言当成刷屏/违禁词误处理。
+    """
+    raw = getattr(event.message_obj, "raw_message", None)
+    sender = raw.get("sender") if isinstance(raw, dict) else None
+    role = str((sender or {}).get("role", "")).lower()
+    return role in {"owner", "admin"}
 
 
 def get_reply_message_str(event: AiocqhttpMessageEvent) -> str | None:
@@ -72,12 +89,29 @@ def get_reply_message_str(event: AiocqhttpMessageEvent) -> str | None:
     )
 
 
-def get_replyer_message_id(event: AiocqhttpMessageEvent) -> str | None:
+def get_reply_message_id(event: AiocqhttpMessageEvent) -> str | None:
     """获取被引用消息的消息ID，用于精确匹配进群申请通知等引用消息。"""
     for seg in event.get_messages():
-        if isinstance(seg, Reply) and getattr(seg, "message_id", None):
-            return str(seg.message_id)
+        if isinstance(seg, Reply) and seg.id:
+            return str(seg.id)
     return None
+
+
+def get_replyer_id(event: AiocqhttpMessageEvent) -> str | None:
+    """获取被引用消息发送者的id（排除机器人自己）"""
+    for seg in event.get_messages():
+        if isinstance(seg, Reply) and seg.sender_id and str(seg.sender_id) != str(event.get_self_id()):
+            return str(seg.sender_id)
+    return None
+
+
+def get_target_ids(event: AiocqhttpMessageEvent) -> list[str]:
+    """操作目标：优先取 @ 的群友，没有则取被引用消息的发送者。"""
+    tids = get_ats(event)
+    if tids:
+        return tids
+    replyer_id = get_replyer_id(event)
+    return [replyer_id] if replyer_id else []
 
 
 def extract_message_id(result) -> str | None:
@@ -99,7 +133,9 @@ def format_time(timestamp):
     return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
 
 
-async def download_file(url: str, save_path: Path, max_size: int = 10 * 1024 * 1024, timeout_secs: int = 10) -> Path | None:
+async def download_file(
+    url: str, save_path: Path, max_size: int = 10 * 1024 * 1024, timeout_secs: int = 10
+) -> Path | None:
     """下载文件并保存到本地。优先使用原协议，失败后回退到另一种协议（http/https 互转）。带超时与大小限制。"""
     candidates = [url]
     if url.startswith("https://"):
