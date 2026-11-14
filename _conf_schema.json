@@ -230,6 +230,18 @@
         },
         "default": 0
       },
+      "punish_enabled": {
+        "description": "越权惩罚",
+        "hint": "开启后，成员调用需要管理员及以上权限的命令时，自动随机禁言该成员",
+        "type": "bool",
+        "default": true
+      },
+      "punish_ban_time": {
+        "description": "越权惩罚时长",
+        "hint": "越权惩罚的随机禁言时长范围，单位：秒，用~表示范围，格式非法时回退 30~300",
+        "type": "string",
+        "default": "30~300"
+      },
       "clear_inactive_days": {
         "description": "清理未发言天数",
         "hint": "清理群友命令未指定天数时使用的默认值：超过此天数无发言且等级低于阈值的成员列入清理候选",
@@ -638,6 +650,14 @@
           "custom_ban_words",
           "word_ban_time",
           "spamming_ban_time"
+        ]
+      },
+      "越权惩罚": {
+        "description": "成员调用管理命令时的随机禁言",
+        "type": "list",
+        "default": [
+          "punish_enabled",
+          "punish_ban_time"
         ]
       },
       "清理群友": {
