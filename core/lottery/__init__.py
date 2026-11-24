@@ -44,8 +44,8 @@ class LotteryHandle:
         async with self._init_lock:
             if self._restored:
                 return
-            raw_active, raw_history = self.store.load()
-            self._restore_history(raw_history)
+            raw_active, raw_history, raw_index = self.store.load()
+            self._restore_history(raw_history, raw_index)
             self._restore_active(raw_active)
             self._restored = True
             await self.save(immediate=True)
@@ -64,11 +64,9 @@ class LotteryHandle:
         return {
             "version": STORE_VERSION,
             "active": [LotteryStore.lottery_to_dict(lottery) for lottery in self._active_values()],
-            "history": {
-                str(gid): [LotteryStore.lottery_to_dict(item) for item in records]
-                for gid, records in self.history.items()
-                if records
-            },
+            # 场次表每场只写一次，每个参与群再各留一份场次 ID 索引
+            "history": [LotteryStore.lottery_to_dict(item) for item in self._history_values()],
+            "index": {str(gid): [item.id for item in records] for gid, records in self.history.items() if records},
         }
 
     async def save(self, immediate: bool = False):
@@ -84,17 +82,27 @@ class LotteryHandle:
             values.append(lottery)
         return values
 
-    def _restore_history(self, raw_history: dict):
-        for gid, records in raw_history.items():
-            if not isinstance(records, list):
+    def _history_values(self) -> list[Lottery]:
+        seen: set[str] = set()
+        values: list[Lottery] = []
+        for records in self.history.values():
+            for item in records:
+                if item.id in seen:
+                    continue
+                seen.add(item.id)
+                values.append(item)
+        return values
+
+    def _restore_history(self, raw_history: list, raw_index: dict):
+        by_id: dict[str, Lottery] = {}
+        for record in raw_history:
+            lottery = self.store.record_to_lottery(record)
+            if lottery is not None:
+                by_id[lottery.id] = lottery
+        for gid, ids in raw_index.items():
+            if not isinstance(ids, list):
                 continue
-            restored: list[Lottery] = []
-            for record in records:
-                lottery = self.store.record_to_lottery(record)
-                if lottery is not None:
-                    restored.append(lottery)
-                if len(restored) >= MAX_HISTORY:
-                    break
+            restored = [by_id[rid] for rid in ids if isinstance(rid, str) and rid in by_id][:MAX_HISTORY]
             if restored:
                 self.history[str(gid)] = restored
                 self.last[str(gid)] = restored[0]
@@ -161,6 +169,7 @@ class LotteryHandle:
         ):
             return ["参与人数已达上限，抽奖正在开奖"]
         lottery.participants[user_id] = nickname
+        lottery.user_groups[user_id] = group_id
 
         if lottery.mode == "instant":
             texts = await self.engine.instant_draw(event, lottery, user_id, nickname)
@@ -240,7 +249,7 @@ class LotteryHandle:
             if str(index).isdigit():
                 index = int(index)
             else:
-                return ["往期序号需为数字，例如「抽奖查询 往期 1」"]
+                return ["往期序号需为数字，例如「/抽奖查询 往期 1」"]
         if not 1 <= index <= len(history):
             return [f"往期序号需在 1~{len(history)} 之间"]
         return ["\n".join(result_lines(history[index - 1], self.tz, f"【往期抽奖 #{index}】"))]

@@ -123,7 +123,7 @@ class LotteryEngine:
             if lottery.deadline_label:
                 lines.append(f"参与截止：{lottery.deadline_label}")
             lines.append("每次参与立即随机判定，名额抽完、人数达上限或到截止时间即结束")
-        lines.append("发送「参与抽奖」参加；同一时间每群仅一场抽奖")
+        lines.append("发送「/参与抽奖」参加；同一时间每群仅一场抽奖")
         text = "\n".join(lines)
         if event.is_private_chat():
             await event.send(event.plain_result(f"抽奖已创建，开始公告已发送到参与群：{'、'.join(lottery.groups)}"))
@@ -185,6 +185,7 @@ class LotteryEngine:
         lottery.closed = True
         lottery.closing = False
         lottery.drawn_at = time.time()
+        lottery.participant_count = len(lottery.participants)
 
         if lottery.mode != "instant":
             # 时间/人数开奖：从全部参与者中随机抽取，份数多于参与人数时全员中奖
@@ -193,6 +194,12 @@ class LotteryEngine:
             lottery.winners = [(uid, lottery.participants[uid]) for uid in winners]
             if lottery.delivery == "private":
                 await self.deliver_prizes(lottery)
+
+        # 开奖后历史只需要中奖明细：清空参与者与剩余库存，只保留中奖者所在的群
+        winner_ids = {uid for uid, _ in lottery.winners}
+        lottery.participants.clear()
+        lottery.stock.clear()
+        lottery.user_groups = {uid: gid for uid, gid in lottery.user_groups.items() if uid in winner_ids}
 
         for gid in lottery.groups:
             if self.handle.active.get(gid) is lottery:
@@ -287,7 +294,7 @@ class LotteryEngine:
         self, lottery: Lottery, event: AiocqhttpMessageEvent | None = None, reason: str = ""
     ) -> list[str]:
         """返回给调用方 yield 的文本；当前群不在这里发送，以便 AstrBot 附加 @/引用。"""
-        empty_text = "本次无人中奖" if lottery.participants else "无人参与，本次抽奖取消"
+        empty_text = "本次无人中奖" if lottery.participant_count else "无人参与，本次抽奖取消"
         text = "\n".join(
             result_lines(
                 lottery,
