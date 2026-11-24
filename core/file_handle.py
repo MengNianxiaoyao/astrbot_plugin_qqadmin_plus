@@ -242,6 +242,12 @@ class FileHandle:
         except Exception as e:
             logger.error(f"上传群文件失败：{e}")
             return f"上传失败：{e}"
+        finally:
+            # 本地只是上传中转，无论成功失败都清掉，避免长期堆积
+            try:
+                file_path.unlink(missing_ok=True)
+            except Exception as e:
+                logger.debug(f"清理上传临时文件失败: {e}")
         return f"群文件已上传：{path}"
 
     async def delete_group_file(self, event: AiocqhttpMessageEvent, path: str):

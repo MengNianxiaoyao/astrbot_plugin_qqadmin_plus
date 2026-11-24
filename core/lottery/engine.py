@@ -23,11 +23,20 @@ class LotteryConflictError(Exception):
         super().__init__("、".join(groups))
 
 
+class LotteryNotReadyError(Exception):
+    """开奖前平台连接未就绪：整场推迟，等连接恢复后再开。"""
+
+
+# 连接未就绪时重新尝试开奖的间隔（秒），与 client_for 的静默窗口一致
+DRAW_RETRY_DELAY = 10.0
+
+
 class LotteryEngine:
     def __init__(self, handle):
         self.handle = handle
         self.tasks: dict[str, asyncio.Task] = {}
         self.bg_tasks: set[asyncio.Task] = set()
+        self._draw_retries: dict[str, asyncio.Task] = {}
         self._client_retry_at = 0.0
 
     # ============================== 任务 ==============================
@@ -56,10 +65,11 @@ class LotteryEngine:
             logger.error(f"抽奖后台任务异常: {exc}", exc_info=exc)
 
     def cancel_all(self):
-        for task in [*self.tasks.values(), *self.bg_tasks]:
+        for task in [*self.tasks.values(), *self.bg_tasks, *self._draw_retries.values()]:
             task.cancel()
         self.tasks.clear()
         self.bg_tasks.clear()
+        self._draw_retries.clear()
 
     # ============================== 创建 ==============================
 
@@ -142,7 +152,7 @@ class LotteryEngine:
         if len(lottery.winners) >= lottery.copies:
             # 并发参与时名额可能刚被抽完，不能再追加中奖者
             texts = ["本次抽奖奖品已抽完，正在开奖"]
-            texts += await self.draw(lottery, event=event, reason="名额已抽完")
+            texts += await self.safe_draw(lottery, event=event, reason="名额已抽完")
             return texts
         chance = instant_chance(lottery) if cap else 1.0
         if random.random() < chance:
@@ -157,7 +167,7 @@ class LotteryEngine:
                 f"（{len(lottery.participants)}/{cap} 人，剩余 {remaining} 份）"
             ]
         if reason := finished_reason(lottery):
-            texts += await self.draw(lottery, event=event, reason=reason)
+            texts += await self.safe_draw(lottery, event=event, reason=reason)
         return texts
 
     async def wait_and_draw(self, lottery: Lottery):
@@ -169,19 +179,65 @@ class LotteryEngine:
         except asyncio.CancelledError:
             raise
 
-    async def safe_draw(self, lottery: Lottery, event: AiocqhttpMessageEvent | None = None, reason: str = ""):
-        """开奖兜底：异常时回滚闭锁状态，避免活动永久卡在“正在开奖”。"""
+    async def safe_draw(
+        self, lottery: Lottery, event: AiocqhttpMessageEvent | None = None, reason: str = ""
+    ) -> list[str]:
+        """开奖兜底：连接未就绪时整场推迟；异常时回滚闭锁状态，避免永久卡在“正在开奖”。"""
         try:
-            await self.draw(lottery, event=event, reason=reason)
+            return await self.draw(lottery, event=event, reason=reason)
+        except LotteryNotReadyError:
+            self.schedule_draw_retry(lottery, reason)
+            logger.warning(f"抽奖开奖推迟：平台连接未就绪（{lottery.group_id}）")
+            # 平台未就绪时任何回复都发不出去，等重试成功后统一发开奖公告
+            return []
         except Exception as e:
             logger.error(f"抽奖开奖失败({lottery.group_id}): {e}", exc_info=True)
             lottery.closed = False
             lottery.closing = False
             await self.handle.save(immediate=True)
+            return []
+
+    def schedule_draw_retry(self, lottery: Lottery, reason: str):
+        """连接未就绪时安排一次延迟重试，同一场抽奖只保留一个重试任务。"""
+        gid = lottery.group_id
+        existing = self._draw_retries.get(gid)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(self._retry_draw(lottery, reason))
+        self._draw_retries[gid] = task
+        task.add_done_callback(lambda _t, gid=gid: self._draw_retries.pop(gid, None))
+
+    async def _retry_draw(self, lottery: Lottery, reason: str):
+        await asyncio.sleep(DRAW_RETRY_DELAY)
+        if lottery.closed:
+            return
+        # 重试必须真正探测一次，不能被上次失败设置的静默窗口挡住
+        self._client_retry_at = 0.0
+        await self.safe_draw(lottery, reason=reason)
+
+    async def cancel_draw(self, lottery: Lottery):
+        """取消抽奖：不抽奖、不发奖、不写历史；同时停掉定时与延迟重试任务。"""
+        if lottery.closed:
+            return
+        lottery.closed = True
+        lottery.closing = False
+        for gid in lottery.groups:
+            if self.handle.active.get(gid) is lottery:
+                self.handle.active.pop(gid, None)
+        self.forget_task(lottery.group_id)
+        retry = self._draw_retries.pop(lottery.group_id, None)
+        if retry is not None:
+            retry.cancel()
+        await self.handle.save(immediate=True)
 
     async def draw(self, lottery: Lottery, event: AiocqhttpMessageEvent | None = None, reason: str = "") -> list[str]:
         if lottery.closed:
             return []
+        # 开奖前先确认连接可用；未就绪不闭锁、不写历史，整场推迟到重试
+        if not await self.client_for(lottery):
+            lottery.closing = True
+            await self.handle.save()
+            raise LotteryNotReadyError(lottery.group_id)
         lottery.closed = True
         lottery.closing = False
         lottery.drawn_at = time.time()
@@ -223,26 +279,45 @@ class LotteryEngine:
             return None
         if time.time() < self._client_retry_at:
             return None
-        try:
-            client = await cache.get_client(bot_id=lottery.bot_id, group_id=lottery.group_id)
+
+        # adapter 存在不代表 WebSocket 已连上：每轮限时发现并按 bot_id 匹配登录信息，
+        # 最多约 3 秒；拿不到就跳过本次通知，30 秒内不再重试，避免拖慢开奖。
+        client = None
+        for attempt in range(3):
+            if attempt:
+                await asyncio.sleep(0.4)
+            try:
+                client = await asyncio.wait_for(
+                    cache.get_client(bot_id=lottery.bot_id, group_id=lottery.group_id),
+                    timeout=0.8,
+                )
+            except Exception as e:
+                logger.debug(f"抽奖探测 aiocqhttp 连接失败: {e}")
+                client = None
             if client is None:
-                # 平台可能比插件初始化稍晚就绪，补开奖前最多等 15 秒
-                for _ in range(15):
-                    await asyncio.sleep(1)
-                    client = await cache.get_client(bot_id=lottery.bot_id, group_id=lottery.group_id)
-                    if client is not None:
-                        break
-        except Exception as e:
-            logger.warning(f"抽奖获取 aiocqhttp client 失败: {e}")
-            client = None
+                continue
+            # 旧数据没有 bot_id，get_client 无法按登录信息确认，补一次轻量探测
+            if not lottery.bot_id and not await self._client_ready(client):
+                client = None
+                continue
+            break
+
         if client is None:
-            # 一段时间内不再重复等待，避免每份奖品都卡 15 秒
-            self._client_retry_at = time.time() + 30
-            logger.warning(f"抽奖没有可用 aiocqhttp client（bot {lottery.bot_id or '未知'}）")
+            self._client_retry_at = time.time() + 10
+            logger.warning(f"抽奖没有可用的 aiocqhttp 连接（bot {lottery.bot_id or '未知'}）")
             return None
         self._client_retry_at = 0.0
         lottery.client = client
         return client
+
+    @staticmethod
+    async def _client_ready(client) -> bool:
+        """轻量就绪探测：能拿到登录信息才认为连接真正可用。"""
+        try:
+            await asyncio.wait_for(client.get_login_info(), timeout=0.6)
+            return True
+        except Exception:
+            return False
 
     async def _send_dm(self, lottery: Lottery, user_id: str, message: str) -> bool:
         """私聊发送统一入口；失败只记日志并返回 False。"""

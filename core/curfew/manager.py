@@ -51,13 +51,14 @@ class BotCurfewManager:
             await self.store.save_async()
 
     async def enable_curfew(self, group_id: str, start_time: str, end_time: str):
-        """创建群聊的宵禁任务"""
-        if group_id in self.tasks:
-            self.tasks[group_id].stop_curfew_task()
+        """创建群聊的宵禁任务；先建新任务成功后再移除旧的，避免中途失败丢任务。"""
+        old = self.tasks.get(group_id)
         cw = GroupCurfew(self.bot, group_id, start_time, end_time, self.scheduler)
 
         await cw.start_curfew_task()
         self.tasks[group_id] = cw
+        if old is not None:
+            old.stop_curfew_task()
         await self._save()
 
     async def disable_curfew(self, group_id: str) -> bool:

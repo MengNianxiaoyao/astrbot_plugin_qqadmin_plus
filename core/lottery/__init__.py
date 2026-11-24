@@ -14,7 +14,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 
 from ...config import PluginConfig, get_plugin_timezone
-from ...utils import get_ats, get_group_member, get_nickname, safe_int
+from ...utils import get_ats, get_group_member, safe_int
 from .engine import LotteryEngine
 from .models import MAX_HISTORY, STORE_VERSION, Lottery, finished_reason
 from .render import active_text, history_text, join_progress_text, result_lines, user_history_text
@@ -151,13 +151,15 @@ class LotteryHandle:
         if user_id in lottery.participants:
             return ["你已参与本次抽奖，不能重复参与"]
 
-        member = await get_group_member(event.bot, group_id, user_id)
-        reason = self._check_threshold(lottery, member, user_id)
-        if reason:
-            return [reason]
-
-        nickname = await get_nickname(event, user_id, info=member)
-        # 等待昵称期间抽奖可能已开奖/被其他人抽满：进入临界区前再校验一次
+        if lottery.min_level or lottery.titles:
+            # 只有设了门槛才需要群资料；无门槛直接跳过接口查询
+            member = await get_group_member(event.bot, group_id, user_id)
+            reason = self._check_threshold(lottery, member, user_id)
+            if reason:
+                return [reason]
+        # 昵称直接用消息自带的发送人名称，不再为昵称多查一次接口
+        nickname = event.get_sender_name() or user_id
+        # 等待群资料期间抽奖可能已开奖/被其他人抽满：进入临界区前再校验一次
         if lottery.closed or lottery.closing:
             return ["本群抽奖正在开奖，请稍候"]
         if user_id in lottery.participants:
@@ -176,7 +178,7 @@ class LotteryHandle:
         else:
             reason = finished_reason(lottery)
             if reason:
-                texts = await self.engine.draw(lottery, event=event, reason=reason)
+                texts = await self.engine.safe_draw(lottery, event=event, reason=reason)
             else:
                 texts = [join_progress_text(lottery)]
         if not lottery.closed:
@@ -201,6 +203,30 @@ class LotteryHandle:
         return None
 
     # ============================== 查询 ==============================
+
+    async def draw_now(self, event: AiocqhttpMessageEvent) -> list[str]:
+        """立即结束当前群的抽奖并开奖（多群联合时整场开奖）。"""
+        await self.ensure_ready()
+        lottery = self.active.get(event.get_group_id())
+        if lottery is None:
+            return ["本群当前没有进行中的抽奖"]
+        if lottery.closed:
+            return ["本群抽奖已开奖或已取消"]
+        if lottery.closing:
+            return ["本群抽奖正在开奖，请稍候"]
+        return await self.engine.safe_draw(lottery, event=event, reason="立即开奖")
+
+    async def cancel_lottery(self, event: AiocqhttpMessageEvent) -> list[str]:
+        """取消当前群的抽奖：不发奖、不留往期记录。"""
+        await self.ensure_ready()
+        lottery = self.active.get(event.get_group_id())
+        if lottery is None:
+            return ["本群当前没有进行中的抽奖"]
+        text = f"抽奖「{lottery.prize}」已取消，本次不发放奖品"
+        await self.engine.cancel_draw(lottery)
+        # 其他参与群主动通知；当前群由入口 yield
+        await self.engine.broadcast(lottery, text, skip={event.get_group_id()})
+        return [text]
 
     async def query_lottery(
         self, event: AiocqhttpMessageEvent, keyword: str = "", index: int | None = None

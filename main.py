@@ -334,6 +334,22 @@ class QQAdminPlugin(Star):
             yield event.plain_result(text)
         event.stop_event()
 
+    @filter.command("立即开奖", alias={"马上开奖"})
+    @perm_required_for("draw_lottery")
+    async def draw_lottery(self, event: AiocqhttpMessageEvent):
+        """立即结束本群抽奖并开奖"""
+        for text in await self.lottery.draw_now(event):
+            yield event.plain_result(text)
+        event.stop_event()
+
+    @filter.command("取消抽奖", alias={"结束抽奖"})
+    @perm_required_for("cancel_lottery")
+    async def cancel_lottery(self, event: AiocqhttpMessageEvent):
+        """取消本群进行中的抽奖（不发奖、不留记录）"""
+        for text in await self.lottery.cancel_lottery(event):
+            yield event.plain_result(text)
+        event.stop_event()
+
     # ---------- 进群审批（业务在 core/join/*） ----------
     @filter.command("批准", alias={"同意进群"})
     @perm_required_for("agree_add_group")

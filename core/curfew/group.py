@@ -90,12 +90,14 @@ class GroupCurfew:
             trigger=CronTrigger(hour=hour_s, minute=minute_s),
             name=f"curfew_start_{self.group_id}",
             misfire_grace_time=60,  # 如果错过 60 秒内仍执行
+            replace_existing=True,
         )
         self.end_job = self.scheduler.add_job(
             self._disable_curfew,
             trigger=CronTrigger(hour=hour_e, minute=minute_e),
             name=f"curfew_end_{self.group_id}",
             misfire_grace_time=60,
+            replace_existing=True,
         )
         # 立即检查是否跨天在宵禁时间段
         now = datetime.now(self.scheduler.timezone)

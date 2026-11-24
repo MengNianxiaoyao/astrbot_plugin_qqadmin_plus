@@ -27,6 +27,8 @@ class QQAdminDB:
 
         self._conn = None
         self._cache = {}
+        # 群配置快照缓存：热路径（每条群消息的禁词/刷屏检查）避免重复 deepcopy
+        self._snapshot_cache: dict[str, dict] = {}
         self._initialized = False
         self._init_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
@@ -150,9 +152,14 @@ class QQAdminDB:
     async def ensure_group(self, gid: str):
         """确保存在群配置，若没有则按 default_cfg 初始化"""
         async with self._write_lock:
-            if gid not in self._cache or self._is_follow_default_data(self._cache.get(gid)):
-                self._cache[gid] = self._build_explicit_group_record(self.get_group_snapshot(gid))
-                await self._save_to_db(gid, self._cache[gid])
+            await self._ensure_group_locked(gid)
+
+    async def _ensure_group_locked(self, gid: str):
+        """持锁版本：供 set/add 在同一把锁内完成读改写。"""
+        if gid not in self._cache or self._is_follow_default_data(self._cache.get(gid)):
+            self._cache[gid] = self._build_explicit_group_record(self.get_group_snapshot(gid))
+            await self._save_to_db(gid, self._cache[gid])
+            self._snapshot_cache.pop(gid, None)
 
     def list_group_ids(self) -> list[str]:
         return sorted(
@@ -164,13 +171,25 @@ class QQAdminDB:
         )
 
     def get_group_snapshot(self, gid: str) -> dict:
+        """返回缓存的只读快照；内部按群缓存，写操作时失效。"""
+        cached = self._snapshot_cache.get(gid)
+        if cached is not None:
+            return cached
         raw = self._cache.get(gid)
         if self._is_follow_default_data(raw):
             data = copy.deepcopy(self.default_cfg)
         else:
             data = self._strip_meta_fields(raw) or {}
         self._reconcile_group_data(data, self.default_cfg)
+        self._snapshot_cache[gid] = data
         return data
+
+    def invalidate_snapshot(self, gid: str | None = None) -> None:
+        """群配置或默认模板变化后清掉快照缓存。"""
+        if gid is None:
+            self._snapshot_cache.clear()
+        else:
+            self._snapshot_cache.pop(str(gid), None)
 
     # ============================== API ==============================
 
@@ -178,31 +197,32 @@ class QQAdminDB:
         """
         获取整个配置，并自动补齐 default_cfg 的字段
         """
-        if self.is_group_follow_default(gid):
-            return self.get_group_snapshot(gid)
+        async with self._write_lock:
+            if self.is_group_follow_default(gid):
+                return self.get_group_snapshot(gid)
 
-        data = self._cache[gid]
+            data = self._cache[gid]
 
-        changed = self._reconcile_group_data(data, self.default_cfg)
+            changed = self._reconcile_group_data(data, self.default_cfg)
 
-        if data.get(self.FOLLOW_DEFAULT_MARKER) is not False:
-            data[self.FOLLOW_DEFAULT_MARKER] = False
-            changed = True
+            if data.get(self.FOLLOW_DEFAULT_MARKER) is not False:
+                data[self.FOLLOW_DEFAULT_MARKER] = False
+                changed = True
 
-        if changed:
-            async with self._write_lock:
+            if changed:
                 await self._save_to_db(gid, data)
+                self._snapshot_cache.pop(gid, None)
 
-        return self.get_group_snapshot(gid)
+            return self.get_group_snapshot(gid)
 
     async def get(self, gid: str, field: str, default=None):
         """
-        读字段，不存在则补齐 default
+        读字段，不存在则补齐 default；返回拷贝，避免调用方改动缓存
         """
         if self.is_group_follow_default(gid):
             snapshot = self.get_group_snapshot(gid)
             if field in snapshot:
-                return snapshot[field]
+                return copy.deepcopy(snapshot[field])
             return copy.deepcopy(default)
 
         data = self._cache[gid]
@@ -213,31 +233,40 @@ class QQAdminDB:
                 if field not in data:
                     data[field] = copy.deepcopy(default)
                     await self._save_to_db(gid, data)
+                    self._snapshot_cache.pop(gid, None)
 
-        return data[field]
+        return copy.deepcopy(data[field])
 
     async def set(self, gid: str, field: str, value):
         """
         写入字段
         """
-        await self.ensure_group(gid)
         async with self._write_lock:
+            await self._ensure_group_locked(gid)
             self._cache[gid][field] = value
             await self._save_to_db(gid, self._cache[gid])
+            self._snapshot_cache.pop(gid, None)
 
     async def replace_group(self, gid: str, data: dict):
         async with self._write_lock:
             self._cache[gid] = self._build_explicit_group_record(data)
             await self._save_to_db(gid, self._cache[gid])
+            self._snapshot_cache.pop(gid, None)
 
     async def add(self, gid: str, field: str, value):
         """
-        列表字段追加（自动创建列表）
+        列表字段追加（自动创建列表）；读改写在同一把锁内完成
         """
-        lst = list(await self.get(gid, field, []))
-        if value not in lst:
+        async with self._write_lock:
+            await self._ensure_group_locked(gid)
+            data = self._cache[gid]
+            lst = list(data.get(field, []))
+            if value in lst:
+                return
             lst.append(value)
-            await self.set(gid, field, lst)
+            data[field] = lst
+            await self._save_to_db(gid, data)
+            self._snapshot_cache.pop(gid, None)
 
     # ============================== 删除群配置 ==============================
 
@@ -248,6 +277,7 @@ class QQAdminDB:
                 await self._conn.execute("DELETE FROM groups WHERE group_id = ?", (gid,))
                 await self._conn.commit()
             self._cache.pop(gid, None)
+            self._snapshot_cache.pop(gid, None)
 
     # ============================== 关闭 ==============================
 
@@ -256,6 +286,7 @@ class QQAdminDB:
             await self._conn.close()
             self._conn = None
             self._initialized = False
+            self._snapshot_cache.clear()
 
     async def follow_default(self, gid: str | None = None):
         """让指定群（或全部群）重新跟随默认群配置"""
@@ -265,6 +296,7 @@ class QQAdminDB:
                     await self._conn.execute("DELETE FROM groups")
                     await self._conn.commit()
                 self._cache.clear()
+                self._snapshot_cache.clear()
                 logger.info("所有群聊的群管配置已重新跟随默认值")
                 return
 
@@ -276,4 +308,5 @@ class QQAdminDB:
                 )
                 await self._conn.commit()
             self._cache.pop(normalized_gid, None)
+            self._snapshot_cache.pop(normalized_gid, None)
         logger.info(f"群聊{normalized_gid}的群管配置已重新跟随默认值")

@@ -62,7 +62,11 @@ class NormalHandle:
         return "\n".join(results)
 
     async def set_group_whole_ban(self, event: AiocqhttpMessageEvent, enable: bool):
-        await event.bot.set_group_whole_ban(group_id=int(event.get_group_id()), enable=enable)
+        try:
+            await event.bot.set_group_whole_ban(group_id=int(event.get_group_id()), enable=enable)
+        except Exception as e:
+            logger.warning(f"全体禁言操作失败: {e}")
+            return f"全体禁言操作失败：{e}"
         return "已开启全体禁言" if enable else "已关闭全体禁言"
 
     async def set_group_card(
@@ -146,7 +150,7 @@ class NormalHandle:
                 )
                 gid = event.get_group_id()
                 if await self.db.get(gid, "use_global_block", False):
-                    self.global_list.add("block", tid)
+                    await self.global_list.add("block", tid)
                 else:
                     await self.db.add(gid, "block_ids", str(tid))
                 results.append(f"已将【{tid}-{target_name}】踢出本群并拉黑!")
@@ -181,10 +185,18 @@ class NormalHandle:
                 return "未指定要设置精华的消息"
             message_id = first_seg.id
         if enable:
-            await event.bot.set_essence_msg(message_id=int(message_id))
+            try:
+                await event.bot.set_essence_msg(message_id=int(message_id))
+            except Exception as e:
+                logger.warning(f"设置精华失败: {e}")
+                return f"设置精华失败：{e}"
             return "已设为精华消息"
         else:
-            await event.bot.delete_essence_msg(message_id=int(message_id))
+            try:
+                await event.bot.delete_essence_msg(message_id=int(message_id))
+            except Exception as e:
+                logger.warning(f"取消精华失败: {e}")
+                return f"取消精华失败：{e}"
             return "已取消精华消息"
 
     @staticmethod
@@ -215,7 +227,11 @@ class NormalHandle:
 
     async def get_essence_msg_list(self, event: AiocqhttpMessageEvent):
         """查看群精华"""
-        essence_data = await event.bot.get_essence_msg_list(group_id=int(event.get_group_id()))
+        try:
+            essence_data = await event.bot.get_essence_msg_list(group_id=int(event.get_group_id()))
+        except Exception as e:
+            logger.warning(f"获取群精华失败: {e}")
+            return f"获取群精华失败：{e}"
         if isinstance(essence_data, dict):
             essence_data = essence_data.get("data") or []
         if not isinstance(essence_data, list) or not essence_data:
@@ -244,14 +260,22 @@ class NormalHandle:
         image_url = image_url or extract_image_url(chain=event.get_messages())
         if not image_url:
             return "未获取到新头像"
-        await event.bot.set_group_portrait(
-            group_id=int(event.get_group_id()),
-            file=image_url,
-        )
+        try:
+            await event.bot.set_group_portrait(
+                group_id=int(event.get_group_id()),
+                file=image_url,
+            )
+        except Exception as e:
+            logger.warning(f"设置群头像失败: {e}")
+            return f"设置群头像失败：{e}"
         return "群头像已更新"
 
     async def set_group_name(self, event: AiocqhttpMessageEvent, group_name: str | int | None = None):
         if not group_name:
             return "未输入新群名"
-        await event.bot.set_group_name(group_id=int(event.get_group_id()), group_name=str(group_name))
+        try:
+            await event.bot.set_group_name(group_id=int(event.get_group_id()), group_name=str(group_name))
+        except Exception as e:
+            logger.warning(f"设置群名失败: {e}")
+            return f"设置群名失败：{e}"
         return f"本群群名更新为：{group_name}"

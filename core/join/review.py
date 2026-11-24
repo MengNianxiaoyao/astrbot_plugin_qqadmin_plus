@@ -30,6 +30,8 @@ class JoinReviewer:
         self.global_list = global_list
         self._group_cache = group_cache
         self.state = state
+        # 多群探测结果短缓存：同一申请人的重复事件不重复扫全群
+        self._other_group_cache: dict[tuple[str, str], tuple[str | None, float]] = {}
 
     async def _group_counts(self, gid: str, client=None) -> tuple[int, int] | None:
         """群（现有人数, 上限）。必须实时直查 OneBot 接口，不用群缓存（待审核名额差一两人都不能错）。
@@ -98,6 +100,10 @@ class JoinReviewer:
         """检查用户是否已在同账号管理的其他群中，返回群名，否返回 None。"""
         if client is None or not self._group_cache:
             return None
+        cache_key = (gid, uid)
+        cached = self._other_group_cache.get(cache_key)
+        if cached and time.time() - cached[1] < 60:
+            return cached[0]
         try:
             groups = await self._group_cache.list_groups()
         except Exception as e:
@@ -109,24 +115,43 @@ class JoinReviewer:
             if isinstance(g, dict) and str(g.get("group_id", "")) and str(g.get("group_id", "")) != gid
         ]
         if not others:
+            self._other_group_cache[cache_key] = (None, time.time())
             return None
+
+        semaphore = asyncio.Semaphore(4)
 
         async def _check(item: tuple[str, str]) -> str | None:
             ngid, name = item
             # 单次探测超时封顶：部分 OneBot 实现在查询非成员时可能无响应
-            info = await get_group_member(client, ngid, uid, timeout_secs=10, no_cache=True)
+            async with semaphore:
+                info = await get_group_member(client, ngid, uid, timeout_secs=10, no_cache=True)
             # 探测失败按“不在该群”处理，不阻断正常审核
             return name if info else None
 
-        for name in await asyncio.gather(*[_check(item) for item in others]):
-            if name:
-                return name
-        return None
+        # 并发探测但限流；找到第一个就取消剩余请求，群多时不至于一直等最慢的
+        result: str | None = None
+        tasks = [asyncio.ensure_future(_check(item)) for item in others]
+        try:
+            for future in asyncio.as_completed(tasks):
+                name = await future
+                if name:
+                    result = name
+                    break
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+
+        self._other_group_cache[cache_key] = (result, time.time())
+        if len(self._other_group_cache) > 500:
+            oldest = min(self._other_group_cache.items(), key=lambda kv: kv[1][1])[0]
+            self._other_group_cache.pop(oldest, None)
+        return result
 
     async def add_to_block(self, gid: str, uid: str):
         """向群黑名单或全局黑名单添加用户（根据 use_global_block 判断）"""
         if await self.db.get(gid, "use_global_block", False):
-            self.global_list.add("block", uid)
+            await self.global_list.add("block", uid)
         else:
             await self.db.add(gid, "block_ids", uid)
 

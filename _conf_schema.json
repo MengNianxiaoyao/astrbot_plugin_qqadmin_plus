@@ -545,6 +545,30 @@
         ],
         "default": "成员"
       },
+      "lottery_draw": {
+        "description": "立即开奖",
+        "hint": "立即结束本群进行中的抽奖并开奖；多群联合时整场一起开奖",
+        "type": "string",
+        "options": [
+          "超管",
+          "群主",
+          "管理员",
+          "成员"
+        ],
+        "default": "管理员"
+      },
+      "lottery_cancel": {
+        "description": "取消抽奖",
+        "hint": "取消本群进行中的抽奖，不发放奖品且不留往期记录；多群联合时整场取消",
+        "type": "string",
+        "options": [
+          "超管",
+          "群主",
+          "管理员",
+          "成员"
+        ],
+        "default": "管理员"
+      },
       "approve": {
         "description": "批准/驳回（进群申请）",
         "type": "string",

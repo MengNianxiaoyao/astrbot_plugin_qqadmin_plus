@@ -78,7 +78,14 @@ class LotteryWizard:
         sender_id = str(event.get_sender_id())
         data: dict[str, Any] = {"bot_id": str(event.get_self_id())}
         step = {"name": "prize"}
-        await event.send(event.plain_result("【发起抽奖】请输入奖品名称（发送「取消」退出）"))
+        try:
+            await event.send(event.plain_result("【发起抽奖】请输入奖品名称（发送「取消」退出）"))
+        except Exception as e:
+            # 引导消息发不出去时立即释放占位，避免该群永久停留在“创建中”
+            h.wizards.difference_update(locked)
+            logger.warning(f"抽奖引导发送失败: {e}")
+            event.stop_event()
+            return
 
         async def enter_groups(wait_event: AiocqhttpMessageEvent) -> bool:
             """拉取机器人已加入的群并发送选择列表；失败时返回 False 由调用方结束问答。"""

@@ -5,6 +5,7 @@
 llm_perm_block）在 perm_block 会合。
 """
 
+import asyncio
 import inspect
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -114,7 +115,9 @@ class PermissionManager:
             explicit_targets = get_target_ids(event) if check_quote else get_ats(event)
         else:
             explicit_targets = []
-        target_levels = [await self.get_perm_level(event, user_id=target_id) for target_id in explicit_targets]
+        target_levels = list(
+            await asyncio.gather(*(self.get_perm_level(event, user_id=target_id) for target_id in explicit_targets))
+        )
 
         reason = evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
         if reason is None:

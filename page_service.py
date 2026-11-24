@@ -248,6 +248,7 @@ class QQAdminPageService:
         sanitized.pop(FOLLOW_DEFAULT_KEY, None)
         self._apply_group_level_updates(sanitized)
         self.db.default_cfg = self.cfg.build_group_default_config()
+        self.db.invalidate_snapshot()
         self.cfg.refresh_runtime_settings()
         self.cfg.save_config()
         self.group_cache.invalidate()
@@ -260,7 +261,7 @@ class QQAdminPageService:
         if not isinstance(items, list):
             raise ValueError("items must be a list")
         cleaned = [str(item).strip() for item in items if str(item).strip().isdigit()]
-        return self.global_list.set(list_type, cleaned)
+        return await self.global_list.set(list_type, cleaned)
 
     async def get_global_ban_words(self) -> dict[str, list[str]]:
         return {

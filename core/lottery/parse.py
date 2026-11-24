@@ -73,7 +73,14 @@ def _parse_month_day(target: str, tz: zoneinfo.ZoneInfo, suffix: str) -> tuple[f
     except ValueError:
         return None
     if at <= now:
-        return None
+        # 月份已过（如 1 月站在 12 月设置 1 月）：按明年的同一日期计算
+        if month < now.month:
+            try:
+                at = datetime(now.year + 1, month, day, hour, minute, tzinfo=tz)
+            except ValueError:
+                return None
+        else:
+            return None
     return at.timestamp(), None, clock_label(at.timestamp(), tz, suffix)
 
 
@@ -174,7 +181,10 @@ def parse_stock(value: str, copies: int) -> tuple[list[str], str | None]:
     """按行或 | 切分预存奖品，份数必须与奖品份数一致。"""
     if len(value) > MAX_STOCK_TEXT:
         return [], f"奖品内容过长（上限 {MAX_STOCK_TEXT} 字），请减少后重新发送"
-    items = [line.strip() for line in value.replace("|", "\n").splitlines() if line.strip()]
+    items = [line.strip() for line in value.splitlines() if line.strip()]
+    # 单行时兼容用 | 分隔；多行内容里的 | 视为奖品正文，避免把卡密拆坏
+    if len(items) != copies and "\n" not in value and "|" in value:
+        items = [part.strip() for part in value.split("|") if part.strip()]
     if len(items) != copies:
         return [], f"需要 {copies} 份奖品，当前收到 {len(items)} 份，请重新发送（每行一份或用 | 分隔）"
     if any(len(item) > MAX_ITEM_LEN for item in items):

@@ -66,6 +66,8 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "start_lottery": CommandSpec("lottery_start", bot_perm=PermLevel.MEMBER, check_at=False, allow_private=True),
     "join_lottery": CommandSpec("lottery_join", bot_perm=PermLevel.MEMBER, check_at=False),
     "query_lottery": CommandSpec("lottery_query", bot_perm=PermLevel.MEMBER, check_at=False),
+    "draw_lottery": CommandSpec("lottery_draw", bot_perm=PermLevel.MEMBER, check_at=False),
+    "cancel_lottery": CommandSpec("lottery_cancel", bot_perm=PermLevel.MEMBER, check_at=False),
     # ---------- 进群审批 / 群友管理 / 群文件 ----------
     "agree_add_group": CommandSpec("approve", allow_private=True, check_at=False),
     "refuse_add_group": CommandSpec("approve", allow_private=True, check_at=False),

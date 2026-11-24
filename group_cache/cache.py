@@ -576,6 +576,9 @@ class QQGroupInfoCache:
                         continue
                     if valid is not None and not valid(result):
                         continue
+                    # 已拿到结果，取消其余未完成的请求，避免空转到超时
+                    for task in pending:
+                        task.cancel()
                     return result, client, errors
         finally:
             for task in pending:
@@ -587,7 +590,7 @@ class QQGroupInfoCache:
     # ---------- 连接发现 ----------
 
     async def get_client(self, bot_id: str = "", group_id: str = "") -> Any | None:
-        """按 bot QQ 与群优先取一个可用 client，供跨群通知/私聊发送复用。"""
+        """按 bot QQ 与群优先取一个可用 client；指定 bot_id 但无匹配时返回 None（视为未就绪）。"""
         preferred = self._group_clients.get(str(group_id or "").strip())
         clients = self._build_client_priority_list(preferred)
         if not clients:
@@ -596,6 +599,7 @@ class QQGroupInfoCache:
             for client in clients:
                 if await self._get_client_bot_id(client) == str(bot_id):
                     return client
+            return None
         return clients[0]
 
     def _build_client_priority_list(self, preferred_client: Any | None = None) -> list[Any]:

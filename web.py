@@ -201,9 +201,9 @@ class QQAdminWebController:
                 return await handler()
             except ValueError as exc:
                 return self._fail(str(exc), 400)
-            except Exception as exc:
+            except Exception:
                 logger.exception("QQAdmin page request failed")
-                return self._fail(str(exc), 500)
+                return self._fail("服务器内部错误，请查看插件日志", 500)
 
         wrapped.__name__ = handler.__name__
         return wrapped

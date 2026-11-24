@@ -1,5 +1,6 @@
 """全局白名单/黑名单：JSON 文件存储，内存缓存 + 懒加载。"""
 
+import asyncio
 from pathlib import Path
 
 from ..utils import load_json, save_json_atomic
@@ -20,6 +21,7 @@ class QQAdminGlobalList:
         self._allow: list[str] = []
         self._block: list[str] = []
         self._loaded = False
+        self._lock = asyncio.Lock()
 
     def load(self) -> None:
         self._allow = self._load_json(self._allow_path)
@@ -37,8 +39,12 @@ class QQAdminGlobalList:
             raise ValueError("list_type must be 'allow' or 'block'")
         return list(getattr(self, f"_{list_type}"))
 
-    def set(self, list_type: str, ids: list[str]) -> list[str]:
-        """覆盖指定全局名单并返回清洗后的结果。"""
+    async def set(self, list_type: str, ids: list[str]) -> list[str]:
+        """覆盖指定全局名单并返回清洗后的结果（写操作串行，避免面板与命令互相覆盖）。"""
+        async with self._lock:
+            return self._set_locked(list_type, ids)
+
+    def _set_locked(self, list_type: str, ids: list[str]) -> list[str]:
         self._ensure_loaded()
         if list_type not in self._PATHS:
             raise ValueError("list_type must be 'allow' or 'block'")
@@ -47,13 +53,14 @@ class QQAdminGlobalList:
         self._save_json(getattr(self, self._PATHS[list_type]), values)
         return list(values)
 
-    def add(self, list_type: str, uid: str) -> list[str]:
+    async def add(self, list_type: str, uid: str) -> list[str]:
         """向指定全局名单添加用户并返回当前名单。"""
-        values = self.get(list_type)
-        uid = str(uid).strip()
-        if uid and uid not in values:
-            values.append(uid)
-        return self.set(list_type, values)
+        async with self._lock:
+            values = self.get(list_type)
+            uid = str(uid).strip()
+            if uid and uid not in values:
+                values.append(uid)
+            return self._set_locked(list_type, values)
 
     @staticmethod
     def _load_json(path: Path) -> list[str]:

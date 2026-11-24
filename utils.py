@@ -234,25 +234,30 @@ async def download_file(
     async with ClientSession() as client:
         for candidate in candidates:
             try:
-                response = await client.get(candidate, timeout=timeout_secs)
-                response.raise_for_status()
-                # 预检 Content-Length
-                clen = response.headers.get("Content-Length")
-                if clen and clen.isdigit() and int(clen) > max_size:
-                    logger.warning(f"文件过大拒绝下载({candidate} {clen} > {max_size})")
-                    continue
-                file = await response.read()
-                if len(file) > max_size:
-                    logger.warning(f"文件过大拒绝保存({candidate} {len(file)} > {max_size})")
-                    continue
-
-                await anyio.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-
-                async with await anyio.open_file(save_path, "wb") as img_file:
-                    await img_file.write(file)
-
-                logger.info(f"文件已保存: {save_path}")
-                return save_path
+                async with client.get(candidate, timeout=timeout_secs) as response:
+                    response.raise_for_status()
+                    # 预检 Content-Length
+                    clen = response.headers.get("Content-Length")
+                    if clen and clen.isdigit() and int(clen) > max_size:
+                        logger.warning(f"文件过大拒绝下载({candidate} {clen} > {max_size})")
+                        continue
+                    # 分块读取并累计大小，避免 Content-Length 缺失时把超大响应读进内存
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in response.content.iter_chunked(64 * 1024):
+                        total += len(chunk)
+                        if total > max_size:
+                            logger.warning(f"文件过大拒绝保存({candidate} > {max_size})")
+                            chunks.clear()
+                            break
+                        chunks.append(chunk)
+                    else:
+                        file = b"".join(chunks)
+                        await anyio.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+                        async with await anyio.open_file(save_path, "wb") as img_file:
+                            await img_file.write(file)
+                        logger.info(f"文件已保存: {save_path}")
+                        return save_path
             except Exception as e:
                 logger.error(f"文件下载失败({candidate}): {e}")
 
