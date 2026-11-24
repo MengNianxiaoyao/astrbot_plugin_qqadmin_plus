@@ -190,7 +190,7 @@ class LotteryStore:
             "delivery_failures": [list(item) for item in lottery.delivery_failures],
             "participants": lottery.participants,
             "user_groups": lottery.user_groups,
-            "participant_count": lottery.participant_count or len(lottery.participants),
+            "participant_count": lottery.participant_count,
             "winners": [list(item) for item in lottery.winners],
             "min_level": lottery.min_level,
             "titles": lottery.titles,

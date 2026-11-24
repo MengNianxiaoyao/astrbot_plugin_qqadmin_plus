@@ -62,8 +62,10 @@ def instant_chance(lottery: Lottery) -> float:
 
 
 def participant_total(lottery: Lottery) -> int:
-    """参与人数：开奖后 participants 已清空，用冻结的计数。"""
-    return lottery.participant_count or len(lottery.participants)
+    """参与人数：未开奖按实时参与者统计，开奖后 participants 已清空才用冻结值。"""
+    if lottery.closed:
+        return lottery.participant_count or len(lottery.participants)
+    return len(lottery.participants)
 
 
 def finished_reason(lottery: Lottery, now: float | None = None) -> str | None:
