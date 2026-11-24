@@ -240,7 +240,7 @@ class LotteryHandle:
             if str(index).isdigit():
                 index = int(index)
             else:
-                return ["往期序号需为数字，例如「抽奖查询 往期 1」"]
+                return ["往期序号需为数字，例如「/抽奖查询 往期 1」"]
         if not 1 <= index <= len(history):
             return [f"往期序号需在 1~{len(history)} 之间"]
         return ["\n".join(result_lines(history[index - 1], self.tz, f"【往期抽奖 #{index}】"))]

@@ -65,7 +65,7 @@ def active_text(lottery: Lottery) -> str:
         lines.append(f"中奖概率：{instant_chance(lottery):.2%}")
         if lottery.expire_at:
             lines.append(f"剩余时间：{time_left_text(lottery, '截止')}")
-    lines.append("发送「参与抽奖」参加")
+    lines.append("发送「/参与抽奖」参加")
     return "\n".join(lines)
 
 
@@ -110,7 +110,7 @@ def result_lines(
 def history_text(history: list[Lottery], tz: zoneinfo.ZoneInfo) -> str:
     if not history:
         return "本群暂无往期抽奖记录"
-    lines = [f"【往期抽奖】最近 {len(history)} 场（发送「抽奖查询 往期 序号」查看详情）"]
+    lines = [f"【往期抽奖】最近 {len(history)} 场（发送「/抽奖查询 往期 序号」查看详情）"]
     for idx, item in enumerate(history, 1):
         lines.append(
             f"{idx}. {item.prize}（{item.copies} 份）｜{when_text(item.drawn_at, tz)}｜中奖 {len(item.winners)} 人"

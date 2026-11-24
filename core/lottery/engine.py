@@ -123,7 +123,7 @@ class LotteryEngine:
             if lottery.deadline_label:
                 lines.append(f"参与截止：{lottery.deadline_label}")
             lines.append("每次参与立即随机判定，名额抽完、人数达上限或到截止时间即结束")
-        lines.append("发送「参与抽奖」参加；同一时间每群仅一场抽奖")
+        lines.append("发送「/参与抽奖」参加；同一时间每群仅一场抽奖")
         text = "\n".join(lines)
         if event.is_private_chat():
             await event.send(event.plain_result(f"抽奖已创建，开始公告已发送到参与群：{'、'.join(lottery.groups)}"))
