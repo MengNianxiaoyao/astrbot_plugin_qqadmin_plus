@@ -58,14 +58,14 @@ class BanproHandle:
 
     # -----------投票-----------------
 
-    async def start_vote_mute(self, event, ban_time: int | None = None):
-        await self.votes.start_vote_mute(event, ban_time)
+    async def start_vote_mute(self, event, ban_time: int | None = None) -> str | None:
+        return await self.votes.start_vote_mute(event, ban_time)
 
-    async def start_vote_kick(self, event):
-        await self.votes.start_vote_kick(event)
+    async def start_vote_kick(self, event) -> str | None:
+        return await self.votes.start_vote_kick(event)
 
-    async def cancel_vote_mute(self, event: AiocqhttpMessageEvent):
-        await self.votes.cancel_vote_mute(event)
+    async def cancel_vote_mute(self, event: AiocqhttpMessageEvent) -> str | None:
+        return await self.votes.cancel_vote_mute(event)
 
-    async def vote_mute(self, event: AiocqhttpMessageEvent, agree: bool):
-        await self.votes.vote_mute(event, agree)
+    async def vote_mute(self, event: AiocqhttpMessageEvent, agree: bool) -> str | None:
+        return await self.votes.vote_mute(event, agree)

@@ -18,7 +18,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ..config import PluginConfig
 from ..data import QQAdminDB
-from ..utils import get_ats, get_nickname, get_target_ids
+from ..utils import get_ats, get_group_member, get_nickname, get_target_ids
 from .levels import PermLevel, evaluate_perm
 
 
@@ -60,7 +60,7 @@ class PermissionManager:
         if cached and time.time() - cached[1] < self._perm_ttl:
             return cached[0]
         try:
-            info = await event.bot.get_group_member_info(group_id=int(group_id), user_id=int(user_id), no_cache=True)
+            info = await get_group_member(event.bot, group_id, user_id, timeout_secs=10, no_cache=True)
         except Exception:
             return PermLevel.UNKNOWN
         role = info.get("role", "unknown")
@@ -192,6 +192,37 @@ class PermissionManager:
 
 
 perm_manager = PermissionManager()
+
+
+def private_only(message: str):
+    """仅私聊入口：群聊直接拒绝，不进入权限取数，避免普通成员触发越权惩罚。
+
+    必须写在 @perm_required 外侧：入口检查先于权限判定发生。
+    """
+
+    def decorator(
+        func: Callable[..., AsyncGenerator[Any, Any] | Awaitable[Any]],
+    ) -> Callable[..., AsyncGenerator[Any, Any]]:
+        @wraps(func)
+        async def wrapper(
+            plugin_instance: Any,
+            event: AiocqhttpMessageEvent,
+            *args: Any,
+            **kwargs: Any,
+        ) -> AsyncGenerator[Any, Any]:
+            if not event.is_private_chat():
+                yield event.plain_result(message)
+                event.stop_event()
+                return
+            if inspect.isasyncgenfunction(func):
+                async for item in func(plugin_instance, event, *args, **kwargs):
+                    yield item
+            else:
+                await cast(Awaitable[Any], func(plugin_instance, event, *args, **kwargs))
+
+        return wrapper
+
+    return decorator
 
 
 def perm_required(

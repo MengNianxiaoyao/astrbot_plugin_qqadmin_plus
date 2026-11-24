@@ -16,18 +16,10 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from astrbot.core.utils.session_waiter import SessionController, session_waiter
 
 from ..data import QQAdminDB, QQAdminGlobalList
-from ..utils import format_time, resolve_allow_ids
+from ..utils import chunk_lines, format_time, resolve_allow_ids, safe_int, send_lines
 
 # 确认清理阶段并发踢人的最大并发数
 KICK_CONCURRENCY = 8
-
-
-def _safe_int(value, default: int = 0) -> int:
-    """尽力转 int，None/空串/非法值回 default"""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _last_active_text(last_sent: int, now_ts: int) -> str:
@@ -54,22 +46,13 @@ class MemberHandle:
 
     # ============================== 通用 ==============================
 
-    async def _fetch_members(self, event: AiocqhttpMessageEvent, group_id: str) -> list | None:
-        """拉取群成员列表，失败时回执并返回 None"""
+    async def _fetch_members(self, event: AiocqhttpMessageEvent, group_id: str) -> tuple[list | None, str]:
+        """拉取群成员列表，失败时返回错误文案由调用方决定发送还是回执"""
         try:
-            return await event.bot.get_group_member_list(group_id=int(group_id))
+            return await event.bot.get_group_member_list(group_id=int(group_id)), ""
         except Exception as e:
             logger.error(f"获取群成员列表失败：{e}")
-            await event.send(event.plain_result(f"获取群成员信息失败：{e}"))
-            return None
-
-    async def _send_text(self, event: AiocqhttpMessageEvent, title: str, lines: list[str], chunk_size: int = 50):
-        """仅按行数分片发送：一行内容始终完整保留，绝不按字数截断"""
-        total = len(lines)
-        for start in range(0, total, chunk_size):
-            chunk = lines[start : start + chunk_size]
-            head = title if start == 0 else f"（续 {start + 1}-{start + len(chunk)}/{total}）"
-            await event.send(event.plain_result(f"{head}\n" + "\n".join(chunk)))
+            return None, f"获取群成员信息失败：{e}"
 
     def _get_clear_lock(self, group_id: str) -> asyncio.Lock:
         """取本群清理任务的互斥锁（按群隔离，惰性创建）"""
@@ -78,22 +61,21 @@ class MemberHandle:
     @staticmethod
     def _format_member_line(member: dict) -> str:
         name = member.get("card") or member.get("nickname") or "（无昵称）"
-        return f"{format_time(_safe_int(member.get('join_time')))}：【{member.get('level', 0)}】{member.get('user_id', '?')}-{name}"
+        return f"{format_time(safe_int(member.get('join_time')))}：【{member.get('level', 0)}】{member.get('user_id', '?')}-{name}"
 
     # ============================== 群友信息 ==============================
 
-    async def get_group_member_list(self, event: AiocqhttpMessageEvent):
-        """查看群友信息，按行分片发送。"""
-        await event.send(event.plain_result("获取中..."))
-        members = await self._fetch_members(event, event.get_group_id())
+    async def get_group_member_list(self, event: AiocqhttpMessageEvent) -> list[str]:
+        """查看群友信息，按行分片返回文本。"""
+        members, error = await self._fetch_members(event, event.get_group_id())
         if members is None:
-            return
+            return [error]
         if not members:
-            await event.send(event.plain_result("群内暂无成员数据"))
-            return
+            return ["群内暂无成员数据"]
 
-        members = sorted(members, key=lambda m: _safe_int(m.get("join_time")))
-        await self._send_text(event, "进群时间：【等级】QQ-昵称", [self._format_member_line(m) for m in members])
+        members = sorted(members, key=lambda m: safe_int(m.get("join_time")))
+        lines = [self._format_member_line(m) for m in members]
+        return chunk_lines("进群时间：【等级】QQ-昵称", lines)
 
     # ============================== 清理群友 ==============================
 
@@ -113,9 +95,9 @@ class MemberHandle:
                 continue
             if str(member.get("role", "")).lower() in {"owner", "admin"}:
                 continue
-            last_sent = _safe_int(member.get("last_sent_time"))
-            active_ts = last_sent if last_sent > 0 else _safe_int(member.get("join_time"))
-            level = _safe_int(member.get("level"))
+            last_sent = safe_int(member.get("last_sent_time"))
+            active_ts = last_sent if last_sent > 0 else safe_int(member.get("join_time"))
+            level = safe_int(member.get("level"))
             if active_ts < threshold_ts and level < under_level:
                 candidates.append(
                     _Candidate(
@@ -221,8 +203,9 @@ class MemberHandle:
                 under_level = await self.db.get(group_id, "clear_under_level", 10)
 
             await event.send(event.plain_result("正在获取群友信息，请稍候……"))
-            members = await self._fetch_members(event, group_id)
+            members, error = await self._fetch_members(event, group_id)
             if members is None:
+                await event.send(event.plain_result(error))
                 return
 
             candidates = self._collect_candidates(
@@ -242,7 +225,7 @@ class MemberHandle:
                 return
 
             candidates.sort(key=lambda c: c.active_ts)
-            await self._send_text(
+            await send_lines(
                 event,
                 self._build_title(candidates, skipped, inactive_days, under_level),
                 self._format_candidates(candidates),

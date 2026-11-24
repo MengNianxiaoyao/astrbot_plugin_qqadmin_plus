@@ -6,6 +6,8 @@
 
 from typing import Any
 
+from ..utils import safe_int
+
 BOT_ROLE_PRIORITY = {
     "owner": 0,
     "admin": 1,
@@ -73,13 +75,6 @@ def build_fallback_group(group_id: str) -> dict[str, Any]:
 def build_avatar(group_id: str) -> str:
     # 列表缩略图仅 38px 展示（2x 屏也足够），640 是十几倍浪费
     return f"https://p.qlogo.cn/gh/{group_id}/{group_id}/100"
-
-
-def safe_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def normalize_bot_role(value: Any) -> str:

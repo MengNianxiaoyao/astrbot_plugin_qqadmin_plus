@@ -8,22 +8,19 @@
 """
 
 import copy
-import json
 import re
 import time
 from pathlib import Path
 from typing import Any
-
-from astrbot.api import logger
 
 from .config import PluginConfig
 from .core.banpro import BanproHandle
 from .core.join.approve import JoinApprover
 from .core.join.state import PENDING_DEFAULT_DAYS, JoinState, pending_ttl_secs
 from .data import QQAdminDB, QQAdminGlobalList
-from .group_cache import QQGroupInfoCache
+from .group_cache import QQGroupInfoCache, iter_aiocqhttp_clients
 from .permission import perm_manager
-from .utils import parse_bool
+from .utils import load_json, parse_bool
 
 DEFAULT_GROUP_ID = "__default__"
 FOLLOW_DEFAULT_KEY = "follow_default"
@@ -369,21 +366,15 @@ class QQAdminPageService:
             platform = get_inst(platform_id)
             if platform is not None:
                 candidates = [platform]
-        if not candidates:
-            manager = getattr(self.context, "platform_manager", None)
-            insts = getattr(manager, "platform_insts", None) or []
-            for platform in insts:
-                try:
-                    if getattr(platform.meta(), "name", "") == "aiocqhttp":
-                        candidates.append(platform)
-                except Exception:
-                    continue
-        bots = []
-        for platform in candidates:
-            get_client = getattr(platform, "get_client", None)
-            bot = get_client() if callable(get_client) else getattr(platform, "bot", None)
-            if bot is not None:
-                bots.append(bot)
+        if candidates:
+            bots = []
+            for platform in candidates:
+                get_client = getattr(platform, "get_client", None)
+                bot = get_client() if callable(get_client) else getattr(platform, "bot", None)
+                if bot is not None:
+                    bots.append(bot)
+        else:
+            bots = iter_aiocqhttp_clients(self.context)
         if not bots:
             raise ValueError("找不到可用的 QQ 机器人实例")
         return bots
@@ -421,11 +412,8 @@ class QQAdminPageService:
 
     @staticmethod
     def _load_schema(schema_path: Path) -> dict[str, Any]:
-        try:
-            return json.loads(schema_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("加载页面 schema 失败: %s", exc)
-            return {}
+        schema = load_json(schema_path, {})
+        return schema if isinstance(schema, dict) else {}
 
     @staticmethod
     def _normalize_group_id(group_id: str | int | None) -> str:

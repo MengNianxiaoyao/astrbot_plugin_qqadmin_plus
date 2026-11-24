@@ -1,7 +1,8 @@
 """全局白名单/黑名单：JSON 文件存储，内存缓存 + 懒加载。"""
 
-import json
 from pathlib import Path
+
+from ..utils import load_json, save_json_atomic
 
 
 class QQAdminGlobalList:
@@ -56,14 +57,9 @@ class QQAdminGlobalList:
 
     @staticmethod
     def _load_json(path: Path) -> list[str]:
-        try:
-            if path.exists():
-                data = json.loads(path.read_text(encoding="utf-8"))
-                return [str(uid) for uid in data] if isinstance(data, list) else []
-        except Exception:
-            pass
-        return []
+        data = load_json(path, [])
+        return [str(uid) for uid in data] if isinstance(data, list) else []
 
     @staticmethod
     def _save_json(path: Path, data: list[str]):
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        save_json_atomic(path, data, indent=None)

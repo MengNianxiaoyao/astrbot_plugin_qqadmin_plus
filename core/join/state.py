@@ -1,7 +1,8 @@
-import json
 import time
 from collections.abc import Callable
 from pathlib import Path
+
+from ...utils import load_json, save_json_atomic
 
 # 跨群申请记录有效期（秒）：QQ 进群申请过期后自动失效，不再阻拦其他群申请
 APPLIED_TTL = 7 * 86400
@@ -91,12 +92,7 @@ class JoinState:
         """重启恢复：只认新鲜且结构完整的登记，过期/坏数据直接丢弃。"""
         if self._pending_path is None:
             return
-        try:
-            if not self._pending_path.exists():
-                return
-            data = json.loads(self._pending_path.read_text(encoding="utf-8"))
-        except Exception:
-            return
+        data = load_json(self._pending_path, None)
         if not isinstance(data, dict):
             return
         now = time.time()
@@ -118,8 +114,7 @@ class JoinState:
         if self._pending_path is None:
             return
         try:
-            self._pending_path.parent.mkdir(parents=True, exist_ok=True)
-            self._pending_path.write_text(json.dumps(self.pending, ensure_ascii=False), encoding="utf-8")
+            save_json_atomic(self._pending_path, self.pending, indent=None)
         except Exception:
             pass
 

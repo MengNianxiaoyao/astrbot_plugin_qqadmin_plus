@@ -10,6 +10,6 @@
 子模块：cache.QQGroupInfoCache / utils（归一化/排序/错误格式化）。
 """
 
-from .cache import QQGroupInfoCache
+from .cache import QQGroupInfoCache, iter_aiocqhttp_clients
 
-__all__ = ["QQGroupInfoCache"]
+__all__ = ["QQGroupInfoCache", "iter_aiocqhttp_clients"]

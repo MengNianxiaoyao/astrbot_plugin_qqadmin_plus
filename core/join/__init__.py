@@ -33,13 +33,13 @@ class JoinHandle:
 
     # ---------人工审批-----------------
 
-    async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
+    async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = "") -> str | None:
         """批准进群申请"""
-        await self.approver.agree_add_group(event, extra)
+        return await self.approver.agree_add_group(event, extra)
 
-    async def refuse_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
+    async def refuse_add_group(self, event: AiocqhttpMessageEvent, extra: str = "") -> str | None:
         """驳回进群申请"""
-        await self.approver.refuse_add_group(event, extra)
+        return await self.approver.refuse_add_group(event, extra)
 
 
 __all__ = ["JoinHandle"]

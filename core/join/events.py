@@ -11,6 +11,7 @@ from ...utils import (
     get_nickname,
     parse_cq_to_chain,
     resolve_allow_ids,
+    safe_int,
 )
 from .review import JoinReviewer
 from .state import JoinState
@@ -102,12 +103,7 @@ class JoinEvents:
             logger.warning(f"获取申请人 {uid} 资料失败，转人工审核: {e}")
             info = {}
         nickname = info.get("nickname") or "未知昵称"
-        level = None if info.get("isHideQQLevel") else (info.get("qqLevel") or info.get("level"))
-        if level is not None:
-            try:
-                level = int(level)
-            except (TypeError, ValueError):
-                level = None
+        level = None if info.get("isHideQQLevel") else safe_int(info.get("qqLevel") or info.get("level"), None)
 
         # 判断是否通过（满群时直接拒绝，白名单也不放行）
         approve, reason, code = await self.reviewer.should_approve(gid, uid, comment, level, client=client)

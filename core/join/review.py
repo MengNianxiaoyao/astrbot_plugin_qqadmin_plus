@@ -4,7 +4,7 @@ import time
 from astrbot.api import logger
 
 from ...data import QQAdminDB, QQAdminGlobalList
-from ...utils import resolve_allow_ids, resolve_block_ids
+from ...utils import get_group_member, resolve_allow_ids, resolve_block_ids
 from .decision import (
     EFFECT_BLOCK,
     EFFECT_CLEAR_FAIL,
@@ -85,19 +85,7 @@ class JoinReviewer:
             return 0
 
         async def _is_member(uid: str) -> str | None:
-            try:
-                try:
-                    info = await asyncio.wait_for(
-                        client.get_group_member_info(group_id=int(gid), user_id=int(uid), no_cache=True),
-                        timeout=10,
-                    )
-                except TypeError:
-                    info = await asyncio.wait_for(
-                        client.get_group_member_info(group_id=int(gid), user_id=int(uid)),
-                        timeout=10,
-                    )
-            except Exception:
-                return None
+            info = await get_group_member(client, gid, uid, timeout_secs=10, no_cache=True)
             return uid if info else None
 
         cleared = 0
@@ -125,21 +113,9 @@ class JoinReviewer:
 
         async def _check(item: tuple[str, str]) -> str | None:
             ngid, name = item
-            try:
-                try:
-                    # 单次探测超时封顶：部分 OneBot 实现在查询非成员时可能无响应
-                    info = await asyncio.wait_for(
-                        client.get_group_member_info(group_id=int(ngid), user_id=int(uid), no_cache=True),
-                        timeout=10,
-                    )
-                except TypeError:
-                    info = await asyncio.wait_for(
-                        client.get_group_member_info(group_id=int(ngid), user_id=int(uid)),
-                        timeout=10,
-                    )
-            except Exception:
-                # 探测失败按“不在该群”处理，不阻断正常审核
-                return None
+            # 单次探测超时封顶：部分 OneBot 实现在查询非成员时可能无响应
+            info = await get_group_member(client, ngid, uid, timeout_secs=10, no_cache=True)
+            # 探测失败按“不在该群”处理，不阻断正常审核
             return name if info else None
 
         for name in await asyncio.gather(*[_check(item) for item in others]):

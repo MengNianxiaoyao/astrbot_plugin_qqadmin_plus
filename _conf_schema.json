@@ -522,6 +522,29 @@
         ],
         "default": "管理员"
       },
+      "lottery_join": {
+        "description": "参与抽奖",
+        "hint": "参与门槛（群等级/群头衔）在发起抽奖时按活动设置",
+        "type": "string",
+        "options": [
+          "超管",
+          "群主",
+          "管理员",
+          "成员"
+        ],
+        "default": "成员"
+      },
+      "lottery_query": {
+        "description": "抽奖查询",
+        "type": "string",
+        "options": [
+          "超管",
+          "群主",
+          "管理员",
+          "成员"
+        ],
+        "default": "成员"
+      },
       "approve": {
         "description": "批准/驳回（进群申请）",
         "type": "string",
