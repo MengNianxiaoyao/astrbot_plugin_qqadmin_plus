@@ -1,10 +1,11 @@
 """抽奖数据模型与常量。"""
 
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-STORE_VERSION = 1
+STORE_VERSION = 2
 WIZARD_TIMEOUT = 180
 MAX_COPIES = 50
 MAX_TARGET = 500
@@ -29,10 +30,15 @@ class Lottery:
     mode: str
     starter: str
     label: str
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     delivery: str = "manual"
     stock: list[str] = field(default_factory=list)
     delivery_failures: list[tuple[str, str]] = field(default_factory=list)
     participants: dict[str, str] = field(default_factory=dict)
+    # 参与者 -> 实际参与群，用于开奖明细标注中奖人所在群
+    user_groups: dict[str, str] = field(default_factory=dict)
+    # 开奖时冻结的参与人数；历史记录会清空 participants，人数靠它保留
+    participant_count: int = 0
     winners: list[tuple[str, str]] = field(default_factory=list)
     min_level: int = 0
     titles: list[str] = field(default_factory=list)
@@ -53,6 +59,11 @@ def instant_chance(lottery: Lottery) -> float:
     if not lottery.max_participants:
         return 0.0
     return min(1.0, lottery.copies / lottery.max_participants)
+
+
+def participant_total(lottery: Lottery) -> int:
+    """参与人数：开奖后 participants 已清空，用冻结的计数。"""
+    return lottery.participant_count or len(lottery.participants)
 
 
 def finished_reason(lottery: Lottery, now: float | None = None) -> str | None:
