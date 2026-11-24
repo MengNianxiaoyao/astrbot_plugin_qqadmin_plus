@@ -61,6 +61,11 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "disagree_vote_kick": CommandSpec("vote"),
     "start_curfew": CommandSpec("curfew"),
     "stop_curfew": CommandSpec("curfew"),
+    # ---------- 抽奖 ----------
+    # 发起仅超管私聊：main 的 private_only 先于权限判定拦截群聊，不走可配置的 perm_key
+    "start_lottery": CommandSpec("lottery_start", bot_perm=PermLevel.MEMBER, check_at=False, allow_private=True),
+    "join_lottery": CommandSpec("lottery_join", bot_perm=PermLevel.MEMBER, check_at=False),
+    "query_lottery": CommandSpec("lottery_query", bot_perm=PermLevel.MEMBER, check_at=False),
     # ---------- 进群审批 / 群友管理 / 群文件 ----------
     "agree_add_group": CommandSpec("approve", allow_private=True, check_at=False),
     "refuse_add_group": CommandSpec("approve", allow_private=True, check_at=False),

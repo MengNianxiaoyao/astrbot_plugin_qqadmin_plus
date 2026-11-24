@@ -13,7 +13,7 @@ specs（命令与 LLM 工具权限元数据，全仓唯一出处）。
 """
 
 from .levels import PermLevel, evaluate_perm
-from .manager import PermissionManager, perm_manager, perm_required
+from .manager import PermissionManager, perm_manager, perm_required, private_only
 from .specs import (
     COMMAND_SPECS,
     CommandSpec,
@@ -31,4 +31,5 @@ __all__ = [
     "perm_manager",
     "perm_required",
     "perm_required_for",
+    "private_only",
 ]

@@ -11,8 +11,8 @@
 """
 
 import copy
-import json
 import random
+import zoneinfo
 from collections.abc import MutableMapping
 from pathlib import Path
 from types import UnionType
@@ -23,6 +23,14 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.context import Context
 from astrbot.core.star.star_tools import StarTools
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
+
+from .utils import load_json, save_json_atomic
+
+
+def get_plugin_timezone(context: Context) -> zoneinfo.ZoneInfo:
+    """读取 AstrBot 全局时区，缺省 Asia/Shanghai。"""
+    tz = context.get_config().get("timezone")
+    return zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")
 
 
 class ConfigNode:
@@ -142,7 +150,7 @@ class PluginConfig(ConfigNode):
         self.group_notice_dir.mkdir(parents=True, exist_ok=True)
         self.curfew_file = self.data_dir / "curfew_data.json"
         if not self.curfew_file.exists():
-            self.curfew_file.write_text("{}", encoding="utf-8")
+            save_json_atomic(self.curfew_file, {})
         self.file_dir = self.data_dir / "file"
         self.file_dir.mkdir(parents=True, exist_ok=True)
 
@@ -189,11 +197,8 @@ class PluginConfig(ConfigNode):
 
     def _load_schema(self) -> dict[str, Any]:
         """读取插件 _conf_schema.json（字段集合的唯一来源）。"""
-        try:
-            return json.loads((self.plugin_dir / "_conf_schema.json").read_text(encoding="utf-8"))
-        except Exception as e:
-            logger.warning(f"[config:{self.__class__.__name__}] 读取 _conf_schema.json 失败: {e}")
-            return {}
+        schema = load_json(self.plugin_dir / "_conf_schema.json", {})
+        return schema if isinstance(schema, dict) else {}
 
     def build_group_default_config(self) -> dict[str, Any]:
         """默认群模板：键集合以 schema 为准，值取当前配置。

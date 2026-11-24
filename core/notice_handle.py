@@ -11,7 +11,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 
 from ..config import PluginConfig
-from ..utils import download_file, extract_image_url
+from ..utils import download_file, extract_image_url, format_time
 
 
 class NoticeHandle:
@@ -118,7 +118,7 @@ class NoticeHandle:
                 continue
             try:
                 sender_id = notice.get("sender_id", "未知")
-                publish_time = datetime.fromtimestamp(int(notice.get("publish_time", 0))).strftime("%Y-%m-%d %H:%M:%S")
+                publish_time = format_time(int(notice.get("publish_time", 0)), "%Y-%m-%d %H:%M:%S")
                 message = notice.get("message", {}) or {}
                 message_text = str(message.get("text", "")).replace("&#10;", "\n\n")
             except (TypeError, ValueError):

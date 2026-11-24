@@ -2,6 +2,7 @@ from .banpro import BanproHandle
 from .curfew import CurfewHandle
 from .file_handle import FileHandle
 from .join import JoinHandle
+from .lottery import LotteryHandle
 from .member_handle import MemberHandle
 from .normal_handle import NormalHandle
 from .notice_handle import NoticeHandle
@@ -12,6 +13,7 @@ __all__ = [
     "CurfewHandle",
     "FileHandle",
     "JoinHandle",
+    "LotteryHandle",
     "MemberHandle",
     "NormalHandle",
     "NoticeHandle",

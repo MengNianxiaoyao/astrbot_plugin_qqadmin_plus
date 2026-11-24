@@ -1,7 +1,5 @@
 """词表模块：内置/全局禁词文件 IO 与命中执法。"""
 
-import json
-
 from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -9,7 +7,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ...config import PluginConfig
 from ...data import QQAdminDB
-from ...utils import is_group_admin
+from ...utils import is_group_admin, load_json, save_json_atomic
 
 
 class LexiconStore:
@@ -18,7 +16,8 @@ class LexiconStore:
     def __init__(self, config: PluginConfig, db: QQAdminDB):
         self.cfg = config
         self.db = db
-        self.builtin_ban_data = json.loads(config.ban_lexicon_path.read_text(encoding="utf-8"))
+        builtin = load_json(config.ban_lexicon_path, {})
+        self.builtin_ban_data = builtin if isinstance(builtin, dict) else {}
         self.builtin_ban_version = str(self.builtin_ban_data.get("lastUpdateDate", "未知"))
         self.builtin_ban_words = self._clean_words(self.builtin_ban_data.get("words", []))
         self.global_ban_words = self._load_global_ban_words()
@@ -32,19 +31,15 @@ class LexiconStore:
         if not path.exists():
             self._save_global_ban_words(self.builtin_ban_words)
             return list(self.builtin_ban_words)
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return self._clean_words(data.get("words", []) if isinstance(data, dict) else data)
-        except Exception as e:
-            logger.warning(f"读取全局禁词失败，已回退内置禁词: {e}")
+        data = load_json(path, None)
+        if data is None:
+            logger.warning("读取全局禁词失败，已回退内置禁词")
             return list(self.builtin_ban_words)
+        return self._clean_words(data.get("words", []) if isinstance(data, dict) else data)
 
     def _save_global_ban_words(self, words: list[str]) -> None:
         self.global_ban_words = self._clean_words(words)
-        self.cfg.global_ban_lexicon_path.write_text(
-            json.dumps({"words": self.global_ban_words}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        save_json_atomic(self.cfg.global_ban_lexicon_path, {"words": self.global_ban_words})
 
     def get_global_ban_words(self) -> list[str]:
         return list(self.global_ban_words)

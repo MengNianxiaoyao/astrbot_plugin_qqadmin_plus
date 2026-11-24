@@ -12,23 +12,20 @@ from ..utils import get_ats
 
 
 class RecallHandle:
-    async def delete_msg(self, event: AiocqhttpMessageEvent):
+    async def delete_msg(self, event: AiocqhttpMessageEvent) -> str | None:
         """(引用消息)撤回 | 撤回 @某人(默认bot) 数量(默认10)"""
         client = event.bot
         chain = event.get_messages()
         if not chain:
-            await event.send(event.plain_result("未获取到可撤回的消息"))
-            return
+            return "未获取到可撤回的消息"
         reply_seg = next((seg for seg in chain if isinstance(seg, Reply)), None)
         if reply_seg:
             try:
                 await client.delete_msg(message_id=int(reply_seg.id))
             except Exception:
-                await event.send(event.plain_result("我无权撤回这条消息"))
-            finally:
-                event.stop_event()
-            return
-        elif any(isinstance(seg, At) for seg in chain):
+                return "我无权撤回这条消息"
+            return None
+        if any(isinstance(seg, At) for seg in chain):
             target_ids = get_ats(event) or [event.get_self_id()]
             target_ids = {str(uid) for uid in target_ids}
 
@@ -49,9 +46,7 @@ class RecallHandle:
                 result = await client.call_action("get_group_msg_history", **payloads)
             except Exception as e:
                 logger.warning(f"获取群聊消息记录失败: {e}")
-                await event.send(event.plain_result("获取群聊消息记录失败"))
-                event.stop_event()
-                return
+                return "获取群聊消息记录失败"
 
             raw_messages = []
             if isinstance(result, dict):
@@ -85,8 +80,5 @@ class RecallHandle:
             tasks = [try_delete(msg) for msg in messages]
             await asyncio.gather(*tasks)
 
-            await event.send(event.plain_result(f"已从{len(messages)}条消息中撤回{delete_count}条"))
-            event.stop_event()
-        else:
-            await event.send(event.plain_result("用法：引用要撤回的消息，或 撤回 @群友 [数量]"))
-            event.stop_event()
+            return f"已从{len(messages)}条消息中撤回{delete_count}条"
+        return "用法：引用要撤回的消息，或 撤回 @群友 [数量]"

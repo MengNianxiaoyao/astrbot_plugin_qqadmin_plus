@@ -5,7 +5,6 @@
 """
 
 import asyncio
-import zoneinfo
 
 from aiocqhttp import Event
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -18,7 +17,8 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
 )
 from astrbot.core.star.context import Context
 
-from ...config import PluginConfig
+from ...config import PluginConfig, get_plugin_timezone
+from ...utils import parse_clock
 from .manager import BotCurfewManager
 from .store import CurfewStore
 
@@ -30,8 +30,7 @@ class CurfewHandle:
 
     def __init__(self, context: Context, config: PluginConfig):
         self.context = context
-        tz = self.context.get_config().get("timezone")
-        self.timezone = zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")
+        self.timezone = get_plugin_timezone(self.context)
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
         self.scheduler.start()
         self.store = CurfewStore(config.curfew_file)
@@ -108,17 +107,15 @@ class CurfewHandle:
         """
         统一处理时间格式
         输入: "HH:MM" 或带中文冒号 "HH：MM"
-        返回: (原始字符串, hour:int, minute:int)
+        返回: (清洗后的字符串, hour:int, minute:int)
         出错返回 None
         """
-        try:
-            time_str_clean = time_str.strip().replace("：", ":")
-            hour, minute = map(int, time_str_clean.split(":"))
-            if not (0 <= hour <= 23 and 0 <= minute <= 59):
-                return None
-            return time_str_clean, hour, minute
-        except Exception:
+        time_str_clean = time_str.strip().replace("：", ":")
+        parsed = parse_clock(time_str_clean)
+        if parsed is None:
             return None
+        hour, minute = parsed
+        return time_str_clean, hour, minute
 
     async def start_curfew(
         self,

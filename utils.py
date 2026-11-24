@@ -1,13 +1,19 @@
-"""共享小工具：At/引用解析、名单解析、图片提取、布尔解析、CQ 码解析。
+"""共享小工具：JSON 原子读写、群成员/昵称、分片发送、At/引用解析、名单与 CQ 码解析。
 
+- safe_int / load_json / save_json_atomic：跨模块统一的转换与文件 IO。
+- get_group_member / get_nickname：群资料带超时，昵称自动降级陌生人资料。
+- send_lines：按行分片发送，一行内容不会按字数截断。
 - get_ats 排除 Bot 自身；parse_bool 认“开/关/on/off/1/0”等，非法回 default。
 - parse_cq_to_chain 只认 at/image，未知类型/非法参数保留原文不丢弃；
   本地图片必须落在 allowed_roots 内，否则拦截为占位符（防任意文件读取）。
 """
 
+import asyncio
+import json
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import anyio
 from aiohttp import ClientSession
@@ -18,29 +24,111 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 
 
-async def get_nickname(event: AiocqhttpMessageEvent, user_id: int | str) -> str:
-    """获取指定群友的群昵称或 Q 名，群接口失败/空结果自动降级到陌生人资料"""
-    user_id = int(user_id)
-    client = event.bot
-    group_id = event.get_group_id()
-    info = {}
+def safe_int(value: Any, default: int | None = 0) -> int | None:
+    """尽力转 int，None/空串/非法值回 default。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
-    # 在群里就先试群资料，任何异常或空结果都跳过
-    if group_id.isdigit():
+
+def load_json(path: Path, default: Any = None) -> Any:
+    """读取 JSON；文件不存在或损坏时返回 default。"""
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"读取 JSON 失败({path}): {e}")
+    return default
+
+
+def save_json_atomic(path: Path, data: Any, indent: int | None = 2) -> None:
+    """先写临时文件再替换，避免写入中断留下半个 JSON。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(data, ensure_ascii=False, indent=indent), encoding="utf-8")
+    temp.replace(path)
+
+
+async def get_group_member(
+    client: Any,
+    group_id: str | int | None,
+    user_id: str | int | None,
+    timeout_secs: float = 10.0,
+    no_cache: bool = False,
+) -> dict:
+    """取群成员资料（等级/头衔/名片）；超时或失败返回空 dict。"""
+    gid = str(group_id or "")
+    uid = str(user_id or "")
+    if client is None or not gid.isdigit() or not uid.isdigit():
+        return {}
+    try:
         try:
-            info = await client.get_group_member_info(group_id=int(group_id), user_id=user_id) or {}
-        except Exception:
-            pass
+            kwargs = {"no_cache": True} if no_cache else {}
+            info = await asyncio.wait_for(
+                client.get_group_member_info(group_id=int(gid), user_id=int(uid), **kwargs),
+                timeout_secs,
+            )
+        except TypeError:
+            if not no_cache:
+                raise
+            # 部分 OneBot 实现不认 no_cache，退回普通查询
+            info = await asyncio.wait_for(
+                client.get_group_member_info(group_id=int(gid), user_id=int(uid)),
+                timeout_secs,
+            )
+    except Exception as e:
+        logger.debug(f"获取群成员资料失败({gid}/{uid}): {e}")
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+async def get_nickname(
+    event: AiocqhttpMessageEvent,
+    user_id: int | str,
+    info: dict | None = None,
+    timeout_secs: float = 10.0,
+) -> str:
+    """获取指定群友的群昵称或 Q 名，群接口失败/空结果自动降级到陌生人资料。
+
+    info 可由调用方预先取好（例如抽奖门槛已经查过群资料），避免重复请求。
+    """
+    uid = int(user_id)
+    client = event.bot
+    if info is None:
+        info = await get_group_member(client, event.get_group_id(), uid, timeout_secs=timeout_secs)
 
     # 群资料没拿到就降级到陌生人资料
     if not info:
         try:
-            info = await client.get_stranger_info(user_id=user_id) or {}
+            info = await asyncio.wait_for(client.get_stranger_info(user_id=uid), timeout_secs) or {}
         except Exception:
-            pass
+            info = {}
 
     # 依次取群名片、QQ 昵称、通用 nick，兜底数字 UID
-    return info.get("card") or info.get("nickname") or info.get("nick") or str(user_id)
+    return info.get("card") or info.get("nickname") or info.get("nick") or str(uid)
+
+
+def chunk_lines(title: str, lines: list[str], chunk_size: int = 50) -> list[str]:
+    """按行数分片：一行内容始终完整保留，绝不按字数截断。"""
+    total = len(lines)
+    texts: list[str] = []
+    for start in range(0, total, chunk_size):
+        chunk = lines[start : start + chunk_size]
+        head = title if start == 0 else f"（续 {start + 1}-{start + len(chunk)}/{total}）"
+        texts.append(f"{head}\n" + "\n".join(chunk))
+    return texts
+
+
+async def send_lines(
+    event: AiocqhttpMessageEvent,
+    title: str,
+    lines: list[str],
+    chunk_size: int = 50,
+):
+    """主动发送场景直接发群；命令回执请用 chunk_lines 返回给入口 yield。"""
+    for text in chunk_lines(title, lines, chunk_size):
+        await event.send(event.plain_result(text))
 
 
 async def resolve_allow_ids(db, global_list, gid: str) -> list:
@@ -128,9 +216,9 @@ def extract_message_id(result) -> str | None:
     return str(mid) if mid else None
 
 
-def format_time(timestamp):
-    """格式化时间戳"""
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+def format_time(timestamp, fmt: str = "%Y-%m-%d", tz=None):
+    """格式化时间戳；默认本地日期。"""
+    return datetime.fromtimestamp(timestamp, tz).strftime(fmt)
 
 
 async def download_file(
@@ -181,6 +269,17 @@ def extract_image_url(chain: list[BaseMessageComponent]) -> str | None:
                 if isinstance(reply_seg, Image):
                     return reply_seg.url
     return None
+
+
+def parse_clock(value: str) -> tuple[int, int] | None:
+    """解析 HH:MM 时刻（兼容中文冒号），非法返回 None。"""
+    parts = value.strip().replace("：", ":").split(":")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return None
+    hour, minute = int(parts[0]), int(parts[1])
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
 
 
 def parse_bool(mode: str | bool | None, default: bool | None = False):

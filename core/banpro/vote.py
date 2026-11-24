@@ -90,19 +90,19 @@ class VoteSession:
             if self.vote_cache.get(group_id) is record:
                 self.vote_cache.pop(group_id, None)
 
-    async def start_vote_mute(self, event, ban_time: int | None = None):
+    async def start_vote_mute(self, event, ban_time: int | None = None) -> str | None:
         """发起投票禁言：一群同时只能有一场投票"""
-        await self._start_vote(event, "mute", ban_time)
+        return await self._start_vote(event, "mute", ban_time)
 
-    async def start_vote_kick(self, event):
+    async def start_vote_kick(self, event) -> str | None:
         """发起投票踢人：一群同时只能有一场投票"""
-        await self._start_vote(event, "kick")
+        return await self._start_vote(event, "kick")
 
-    async def _start_vote(self, event, kind: str, ban_time: int | None = None):
+    async def _start_vote(self, event, kind: str, ban_time: int | None = None) -> str | None:
         vote_name, _ = self._vote_label(kind)
         target_ids = get_target_ids(event)
         if not target_ids:
-            return
+            return None
         target_id = target_ids[0]
         group_id = event.get_group_id()
         group_config = self.db.get_group_snapshot(group_id)
@@ -116,15 +116,9 @@ class VoteSession:
             record = self.vote_cache[group_id]
             existing_name, _ = self._vote_label(record.get("kind", "mute"))
             if record.get("target") == target_id:
-                await event.send(event.plain_result(f"已存在对该用户的{existing_name}，可发送「取消投票」结束当前投票"))
-            else:
-                nickname0 = await get_nickname(event, record["target"])
-                await event.send(
-                    event.plain_result(
-                        f"群内已有对 {nickname0} 正在进行的{existing_name}，可发送「取消投票」结束当前投票"
-                    )
-                )
-            return
+                return f"已存在对该用户的{existing_name}，可发送「取消投票」结束当前投票"
+            nickname0 = await get_nickname(event, record["target"])
+            return f"群内已有对 {nickname0} 正在进行的{existing_name}，可发送「取消投票」结束当前投票"
 
         vote_ban = group_config.get("vote_ban", {})
         ttl = int(vote_ban.get("ttl", self.cfg.vote_ban.ttl))
@@ -147,35 +141,33 @@ class VoteSession:
             start_msg = f"已发起对 {nickname} 的踢出投票，输入“【/赞同踢人】或【/反对踢人】”进行表态\n赞同满{threshold}票直接通过，{ttl}秒后结算（仅发起人/管理员可取消投票）"
         else:
             start_msg = f"已发起对 {nickname} 的{vote_name}(禁言{ban_time}秒)，输入“【/赞同禁言】或【/反对禁言】”进行表态\n赞同满{threshold}票直接通过，{ttl}秒后结算（仅发起人/管理员可取消投票）"
-        await event.send(event.plain_result(start_msg))
 
         task = asyncio.create_task(self._settle_vote(group_id, gid_int, bot_client, event, record, ttl))
         self._settle_tasks.add(task)
         task.add_done_callback(self._settle_tasks.discard)
+        return start_msg
 
-    async def cancel_vote_mute(self, event: AiocqhttpMessageEvent):
+    async def cancel_vote_mute(self, event: AiocqhttpMessageEvent) -> str | None:
         """取消当前群正在进行的投票（仅发起人/管理员；权限由装饰器校验）；结算任务醒来后见记录已消失会自动退出"""
         group_id = event.get_group_id()
         record = self.vote_cache.get(group_id)
         if not record:
-            await event.send(event.plain_result("当前没有进行中的投票"))
-            return
+            return "当前没有进行中的投票"
         sender_id = str(event.get_sender_id())
         if (
             sender_id != str(record.get("starter"))
             and await perm_manager.get_perm_level(event, sender_id) > PermLevel.ADMIN
         ):
-            await event.send(event.plain_result("仅投票发起人或管理员可取消投票"))
-            return
+            return "仅投票发起人或管理员可取消投票"
         self.vote_cache.pop(group_id, None)
         vote_name, _ = self._vote_label(record.get("kind", "mute"))
         try:
             nickname = await get_nickname(event, record["target"])
         except Exception:
             nickname = str(record["target"])
-        await event.send(event.plain_result(f"已取消对 {nickname} 的{vote_name}"))
+        return f"已取消对 {nickname} 的{vote_name}"
 
-    async def vote_mute(self, event: AiocqhttpMessageEvent, agree: bool):
+    async def vote_mute(self, event: AiocqhttpMessageEvent, agree: bool) -> str | None:
         """
         赞同/反对当前投票（一群同时只有一场）
         agree=True 表示赞同，False 表示反对
@@ -185,14 +177,12 @@ class VoteSession:
 
         record = self.vote_cache.get(group_id)
         if not record:
-            await event.send(event.plain_result("当前没有进行中的投票"))
-            return
+            return "当前没有进行中的投票"
 
         threshold = record["threshold"]
         target_id = record["target"]
         if str(voter_id) == str(target_id):
-            await event.send(event.plain_result("被投票者不能参与表态"))
-            return
+            return "被投票者不能参与表态"
         _, action = self._vote_label(record.get("kind", "mute"))
 
         # 记录/更新该用户的立场
@@ -205,18 +195,14 @@ class VoteSession:
         if agree_count >= threshold:
             try:
                 await self._punish(event.bot, int(group_id), record)
-                await event.send(event.plain_result(f"投票通过！已{action}{nickname}"))
             except Exception:
                 logger.error(f"bot在群{group_id}权限不足，{action}失败")
+                return None
             finally:
                 # 清理记录（定时任务见前面会检测到记录已删除并直接返回）
                 self.vote_cache.pop(group_id, None)
-            return
+            return f"投票通过！已{action}{nickname}"
 
         # 移除“反对阈值提前否决”，仅保留赞同阈值提前通过；否则等待 TTL 多数决，避免少数反对劫持
         # 否则展示当前进度
-        await event.send(
-            event.plain_result(
-                f"{action}【{nickname}】：\n赞同({agree_count}/{threshold})\n反对({disagree_count}/{threshold})"
-            )
-        )
+        return f"{action}【{nickname}】：\n赞同({agree_count}/{threshold})\n反对({disagree_count}/{threshold})"

@@ -44,6 +44,26 @@ HYDRATE_CONCURRENCY = 8
 STALE_VOTES_REQUIRED = 2
 
 
+def iter_aiocqhttp_clients(context: Any) -> list[Any]:
+    """遍历所有 aiocqhttp 适配器并返回可用 client（面板与抽奖共用的连接发现）。"""
+    clients: list[Any] = []
+    try:
+        insts = list(context.platform_manager.platform_insts)
+    except Exception as e:
+        logger.warning(f"获取平台实例失败: {e}")
+        return clients
+    for inst in insts:
+        if not isinstance(inst, AiocqhttpAdapter):
+            continue
+        try:
+            client = inst.get_client()
+        except Exception:
+            continue
+        if client is not None:
+            clients.append(client)
+    return clients
+
+
 class QQGroupInfoCache:
     """QQ 群信息缓存：聚合多 aiocqhttp 连接的群列表/详情/Bot 身份，带 TTL 与 DB 兜底。"""
 
@@ -566,6 +586,18 @@ class QQGroupInfoCache:
 
     # ---------- 连接发现 ----------
 
+    async def get_client(self, bot_id: str = "", group_id: str = "") -> Any | None:
+        """按 bot QQ 与群优先取一个可用 client，供跨群通知/私聊发送复用。"""
+        preferred = self._group_clients.get(str(group_id or "").strip())
+        clients = self._build_client_priority_list(preferred)
+        if not clients:
+            return None
+        if bot_id:
+            for client in clients:
+                if await self._get_client_bot_id(client) == str(bot_id):
+                    return client
+        return clients[0]
+
     def _build_client_priority_list(self, preferred_client: Any | None = None) -> list[Any]:
         tried_client_ids: set[int] = set()
         clients: list[Any] = []
@@ -584,17 +616,7 @@ class QQGroupInfoCache:
         return clients
 
     def _iter_clients(self) -> list[Any]:
-        clients: list[Any] = []
-        for inst in self.context.platform_manager.platform_insts:
-            if not isinstance(inst, AiocqhttpAdapter):
-                continue
-            try:
-                client = inst.get_client()
-            except Exception:
-                continue
-            if client is not None:
-                clients.append(client)
-        return clients
+        return iter_aiocqhttp_clients(self.context)
 
     # ---------- 实例相关小工具（纯数据变换见 .utils，可单测） ----------
 

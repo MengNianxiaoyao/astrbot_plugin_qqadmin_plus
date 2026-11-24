@@ -18,7 +18,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ..config import PluginConfig
 from ..data import QQAdminDB
-from ..utils import get_ats, get_target_ids
+from ..utils import get_ats, get_group_member, get_nickname, get_target_ids
 from .levels import PermLevel, evaluate_perm
 
 
@@ -60,7 +60,7 @@ class PermissionManager:
         if cached and time.time() - cached[1] < self._perm_ttl:
             return cached[0]
         try:
-            info = await event.bot.get_group_member_info(group_id=int(group_id), user_id=int(user_id), no_cache=True)
+            info = await get_group_member(event.bot, group_id, user_id, timeout_secs=10, no_cache=True)
         except Exception:
             return PermLevel.UNKNOWN
         role = info.get("role", "unknown")
@@ -88,6 +88,7 @@ class PermissionManager:
         check_at: bool = True,
         check_quote: bool = False,
         target_ids: list[str] | None = None,
+        punish: bool = True,
     ) -> str | None:
         user_level = await self.get_perm_level(event, user_id=event.get_sender_id())
 
@@ -115,7 +116,50 @@ class PermissionManager:
             explicit_targets = []
         target_levels = [await self.get_perm_level(event, user_id=target_id) for target_id in explicit_targets]
 
-        return evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
+        reason = evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
+        if reason is None:
+            return None
+
+        # 只有“成员主动调用需管理员及以上的命令”才触发越权惩罚；
+        # Bot 权限不足、动不了目标、等级查询失败（UNKNOWN）、LLM 代调都不惩罚，
+        # 非群聊数字群号时也不惩罚（无法定位禁言目标）。
+        if (
+            punish
+            and user_level == PermLevel.MEMBER
+            and required_level <= PermLevel.ADMIN
+            and str(event.get_group_id()).isdigit()
+        ):
+            return reason + await self._punish_unauthorized(event, group_config)
+        return reason
+
+    async def _punish_unauthorized(self, event: AiocqhttpMessageEvent, group_config: dict) -> str:
+        """成员越权调用管理命令时随机禁言，返回追加到提示后的说明。
+
+        惩罚失败（Bot 无权限、接口异常等）只记日志，不改变原来的越权提示。
+        """
+        if not group_config.get("punish_enabled", True) or self.cfg is None:
+            return ""
+        ban_time = self.cfg.get_ban_time_with_range(group_config.get("punish_ban_time"), None)
+        if ban_time <= 0:
+            return ""
+        try:
+            await event.bot.set_group_ban(
+                group_id=int(event.get_group_id()),
+                user_id=int(event.get_sender_id()),
+                duration=ban_time,
+            )
+        except Exception as e:
+            logger.warning(f"越权惩罚禁言失败: {e}")
+            return ""
+
+        try:
+            nickname = await get_nickname(event, event.get_sender_id())
+        except Exception:
+            nickname = str(event.get_sender_id())
+        logger.info(
+            f"群{event.get_group_id()} 用户{nickname}({event.get_sender_id()}) 越权调用管理命令，已禁言{ban_time}秒"
+        )
+        return f"\n（越权行为已随机禁言 {ban_time} 秒）"
 
     async def llm_perm_block(
         self,
@@ -143,10 +187,42 @@ class PermissionManager:
             perm_key=perm_key,
             check_at=False,
             target_ids=target_ids,
+            punish=False,
         )
 
 
 perm_manager = PermissionManager()
+
+
+def private_only(message: str):
+    """仅私聊入口：群聊直接拒绝，不进入权限取数，避免普通成员触发越权惩罚。
+
+    必须写在 @perm_required 外侧：入口检查先于权限判定发生。
+    """
+
+    def decorator(
+        func: Callable[..., AsyncGenerator[Any, Any] | Awaitable[Any]],
+    ) -> Callable[..., AsyncGenerator[Any, Any]]:
+        @wraps(func)
+        async def wrapper(
+            plugin_instance: Any,
+            event: AiocqhttpMessageEvent,
+            *args: Any,
+            **kwargs: Any,
+        ) -> AsyncGenerator[Any, Any]:
+            if not event.is_private_chat():
+                yield event.plain_result(message)
+                event.stop_event()
+                return
+            if inspect.isasyncgenfunction(func):
+                async for item in func(plugin_instance, event, *args, **kwargs):
+                    yield item
+            else:
+                await cast(Awaitable[Any], func(plugin_instance, event, *args, **kwargs))
+
+        return wrapper
+
+    return decorator
 
 
 def perm_required(

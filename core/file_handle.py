@@ -5,7 +5,6 @@
 """
 
 import re
-from datetime import datetime
 
 import anyio
 from astrbot.api import logger
@@ -15,7 +14,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 
 from ..config import PluginConfig
-from ..utils import download_file
+from ..utils import download_file, format_time
 
 
 class FileHandle:
@@ -145,13 +144,11 @@ class FileHandle:
         lines.append(f"下载次数：{file.get('download_times', '未知')}")
 
         if upload_time := file.get("upload_time", 0):
-            lines.append(f"上传时间：{datetime.fromtimestamp(upload_time).strftime('%Y-%m-%d %H:%M:%S')}")
+            lines.append(f"上传时间：{format_time(upload_time, '%Y-%m-%d %H:%M:%S')}")
         dead_time = file.get("dead_time", 0)
-        lines.append(
-            f"过期时间：{'永久有效' if dead_time == 0 else datetime.fromtimestamp(dead_time).strftime('%Y-%m-%d %H:%M:%S')}"
-        )
+        lines.append(f"过期时间：{'永久有效' if dead_time == 0 else format_time(dead_time, '%Y-%m-%d %H:%M:%S')}")
         if modify_time := file.get("modify_time", 0):
-            lines.append(f"修改时间：{datetime.fromtimestamp(modify_time).strftime('%Y-%m-%d %H:%M:%S')}")
+            lines.append(f"修改时间：{format_time(modify_time, '%Y-%m-%d %H:%M:%S')}")
         logger.debug(f"文件ID：{file.get('file_id', '未知')}")
         return "\n".join(lines)
 

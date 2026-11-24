@@ -2,7 +2,7 @@
 
 结构速览（新人先看这里）：
 - QQAdminPlugin 只做装配：PluginConfig + QQAdminDB + QQGroupInfoCache +
-  各 Handle（normal/recall/notice/banpro/join/member/file/curfew）+ Web 面板。
+  各 Handle（normal/recall/notice/banpro/join/member/file/curfew/lottery）+ Web 面板。
 - 三类入口：@filter.command 群聊命令 / @filter.llm_tool LLM 工具 /
   event_message_type 群事件监听（禁词/刷屏/进群退群）。
 - 权限统一走 permission.perm_required_for，LLM 走 permission.llm_guarded_for；
@@ -28,6 +28,7 @@ from .core import (
     CurfewHandle,
     FileHandle,
     JoinHandle,
+    LotteryHandle,
     MemberHandle,
     NormalHandle,
     NoticeHandle,
@@ -39,6 +40,7 @@ from .permission import (
     llm_guarded_for,
     perm_manager,
     perm_required_for,
+    private_only,
 )
 from .utils import parse_bool
 from .web import QQAdminWebController
@@ -61,6 +63,7 @@ class QQAdminPlugin(Star):
         self.member = MemberHandle(self.db, self.global_list)
         self.file = FileHandle(self.cfg)
         self.curfew = CurfewHandle(self.context, self.cfg)
+        self.lottery = LotteryHandle(self.context, self.cfg, self.group_cache)
         self.web = QQAdminWebController(
             context, self.cfg, self.db, self.group_cache, self.global_list, self.banpro, self.join.state
         )
@@ -76,9 +79,11 @@ class QQAdminPlugin(Star):
     async def initialize(self):
         await self.db.init()
         self._spawn_bg_task(self.curfew.initialize())
+        self._spawn_bg_task(self.lottery.initialize())
         perm_manager.lazy_init(self.cfg, self.db)
 
     async def terminate(self):
+        await self.lottery.stop()
         await self.curfew.stop_all_tasks()
         await self.db.close()
 
@@ -86,6 +91,7 @@ class QQAdminPlugin(Star):
     async def on_platform_loaded(self):
         """平台加载完成时（已初始化的 Bot 会在内部跳过）"""
         self._spawn_bg_task(self.curfew.initialize())
+        self._spawn_bg_task(self.lottery.initialize())
 
     # ---------- 基础群管：禁言 / 名片 / 头衔 / 踢 / 精华 / 撤回 / 公告 ----------
     @filter.command("禁言")
@@ -202,7 +208,9 @@ class QQAdminPlugin(Star):
     @perm_required_for("delete_msg")
     async def delete_msg(self, event: AiocqhttpMessageEvent):
         """(引用消息)撤回 | 撤回 <@群友> <消息数量>"""
-        await self.recall.delete_msg(event)
+        if result := await self.recall.delete_msg(event):
+            yield event.plain_result(result)
+        event.stop_event()
 
     @filter.command("发布群公告")
     @perm_required_for("send_group_notice")
@@ -235,43 +243,50 @@ class QQAdminPlugin(Star):
     @perm_required_for("start_vote_mute")
     async def start_vote_mute(self, event: AiocqhttpMessageEvent, ban_time: int | None = None):
         "投票禁言 <秒数> @群友"
-        await self.banpro.start_vote_mute(event, ban_time)
+        if result := await self.banpro.start_vote_mute(event, ban_time):
+            yield event.plain_result(result)
 
     @filter.command("赞同禁言")
     @perm_required_for("agree_vote_mute")
     async def agree_vote_mute(self, event: AiocqhttpMessageEvent):
         """同意执行当前禁言投票"""
-        await self.banpro.vote_mute(event, agree=True)
+        if result := await self.banpro.vote_mute(event, agree=True):
+            yield event.plain_result(result)
 
     @filter.command("反对禁言")
     @perm_required_for("disagree_vote_mute")
     async def disagree_vote_mute(self, event: AiocqhttpMessageEvent):
         """反对执行当前禁言投票"""
-        await self.banpro.vote_mute(event, agree=False)
+        if result := await self.banpro.vote_mute(event, agree=False):
+            yield event.plain_result(result)
 
     @filter.command("取消投票")
     @perm_required_for("cancel_vote_mute")
     async def cancel_vote_mute(self, event: AiocqhttpMessageEvent):
         """取消当前群正在进行的投票"""
-        await self.banpro.cancel_vote_mute(event)
+        if result := await self.banpro.cancel_vote_mute(event):
+            yield event.plain_result(result)
 
     @filter.command("投票踢人")
     @perm_required_for("start_vote_kick")
     async def start_vote_kick(self, event: AiocqhttpMessageEvent):
         "投票踢人 @群友"
-        await self.banpro.start_vote_kick(event)
+        if result := await self.banpro.start_vote_kick(event):
+            yield event.plain_result(result)
 
     @filter.command("赞同踢人")
     @perm_required_for("agree_vote_kick")
     async def agree_vote_kick(self, event: AiocqhttpMessageEvent):
         """同意执行当前踢出投票"""
-        await self.banpro.vote_mute(event, agree=True)
+        if result := await self.banpro.vote_mute(event, agree=True):
+            yield event.plain_result(result)
 
     @filter.command("反对踢人")
     @perm_required_for("disagree_vote_kick")
     async def disagree_vote_kick(self, event: AiocqhttpMessageEvent):
         """反对执行当前踢出投票"""
-        await self.banpro.vote_mute(event, agree=False)
+        if result := await self.banpro.vote_mute(event, agree=False):
+            yield event.plain_result(result)
 
     @filter.command("开启宵禁")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
@@ -294,18 +309,45 @@ class QQAdminPlugin(Star):
         if result := await self.curfew.stop_curfew(event):
             yield event.plain_result(result)
 
+    # ---------- 抽奖（业务在 core/lottery/） ----------
+    @filter.command("发起抽奖")
+    @private_only("发起抽奖请私聊机器人使用（仅 Bot 管理员）")
+    @perm_required_for("start_lottery")
+    async def start_lottery(self, event: AiocqhttpMessageEvent):
+        """私聊 Bot 管理员发起抽奖（奖品/开奖方式/份数/参与群/门槛）"""
+        await self.lottery.start_lottery(event)
+        event.stop_event()
+
+    @filter.command("参与抽奖", alias={"参加抽奖"})
+    @perm_required_for("join_lottery")
+    async def join_lottery(self, event: AiocqhttpMessageEvent):
+        """参与本群正在进行的抽奖"""
+        for text in await self.lottery.join_lottery(event):
+            yield event.plain_result(text)
+        event.stop_event()
+
+    @filter.command("抽奖查询", alias={"查询抽奖"})
+    @perm_required_for("query_lottery")
+    async def query_lottery(self, event: AiocqhttpMessageEvent, keyword: str = "", index: int | None = None):
+        """查询进行中的抽奖、上次结果或往期记录"""
+        for text in await self.lottery.query_lottery(event, keyword, index):
+            yield event.plain_result(text)
+        event.stop_event()
+
     # ---------- 进群审批（业务在 core/join/*） ----------
     @filter.command("批准", alias={"同意进群"})
     @perm_required_for("agree_add_group")
     async def agree_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         "批准进群申请"
-        await self.join.agree_add_group(event, extra)
+        if result := await self.join.agree_add_group(event, extra):
+            yield event.plain_result(result)
 
     @filter.command("驳回", alias={"拒绝进群", "不批准"})
     @perm_required_for("refuse_add_group")
     async def refuse_add_group(self, event: AiocqhttpMessageEvent, extra: str = ""):
         "驳回进群申请"
-        await self.join.refuse_add_group(event, extra)
+        if result := await self.join.refuse_add_group(event, extra):
+            yield event.plain_result(result)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
@@ -318,7 +360,8 @@ class QQAdminPlugin(Star):
     @perm_required_for("get_group_member_list")
     async def get_group_member_list(self, event: AiocqhttpMessageEvent):
         "查看群友信息"
-        await self.member.get_group_member_list(event)
+        for text in await self.member.get_group_member_list(event):
+            yield event.plain_result(text)
 
     @filter.command("清理群友")
     @perm_required_for("clear_group_member")
