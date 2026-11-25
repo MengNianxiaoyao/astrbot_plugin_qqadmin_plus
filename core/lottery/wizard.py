@@ -296,5 +296,5 @@ class LotteryWizard:
             return [], f"一次最多选择 {MAX_GROUPS} 个群，请重新选择"
         busy = [gid for gid in chosen if gid in self.handle.active or gid in self.handle.wizards]
         if busy:
-            return [], f"群 {'、'.join(busy)} 已有进行中或创建中的抽奖，请换一个或等其结束"
+            return [], f"群 {'、'.join(busy)} 已有进行中或创建中的抽奖\n请更换群聊或等待结束（发送「取消」退出）"
         return chosen, None
