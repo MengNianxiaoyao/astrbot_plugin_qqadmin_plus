@@ -67,6 +67,20 @@ class BotCurfewManager:
             )
             await self.store.save_async()
 
+    async def rebind(self, client):
+        """平台适配器实例被替换后，把 manager 与所有群任务切到新 client，并按当前窗口重新对齐。"""
+        self.bot = client
+        for cw in self.tasks.values():
+            cw.bot = client
+            cw.stop_curfew_task()
+        for cw in list(self.tasks.values()):
+            try:
+                # 重新注册 job，并按当前是否在宵禁窗口补开启/补解禁
+                await cw.start_curfew_task()
+            except Exception as e:
+                logger.error(f"群 {cw.group_id} 宵禁任务重新绑定失败: {e}")
+        await self._save()
+
     async def enable_curfew(self, group_id: str, start_time: str, end_time: str):
         """创建群聊的宵禁任务；先建新任务成功后再移除旧的，避免中途失败丢任务。"""
         old = self.tasks.get(group_id)

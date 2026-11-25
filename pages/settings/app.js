@@ -880,8 +880,8 @@ function renderGlobalList() {
       if (!ok) return;
       const next = all.filter((_, i) => i !== shown[shownIndex].index);
       try {
-        await api.safePost("settings/global-list", { type: currentGlobalType, items: next });
-        globalListData[currentGlobalType] = next;
+        const saved = await api.safePost("settings/global-list", { type: currentGlobalType, items: next });
+        globalListData[currentGlobalType] = Array.isArray(saved) ? saved : next;
         renderGlobalList();
         showToast("已删除");
       } catch (error) {
@@ -903,8 +903,8 @@ async function removeSelectedGlobalList() {
   const del = new Set(values);
   const next = (globalListData[currentGlobalType] || []).filter((uid) => !del.has(uid));
   try {
-    await api.safePost("settings/global-list", { type: currentGlobalType, items: next });
-    globalListData[currentGlobalType] = next;
+    const saved = await api.safePost("settings/global-list", { type: currentGlobalType, items: next });
+    globalListData[currentGlobalType] = Array.isArray(saved) ? saved : next;
     renderGlobalList();
     showToast(`已删除 ${values.length} 个`);
   } catch (error) {
@@ -963,11 +963,11 @@ async function overwriteGlobalList() {
   const ok = await showConfirm(`确定覆写全局${currentGlobalType === "allow" ? "白名单" : "黑名单"}吗？`);
   if (!ok) return;
   try {
-    await api.safePost("settings/global-list", {
+    const saved = await api.safePost("settings/global-list", {
       type: currentGlobalType,
       items,
     });
-    globalListData[currentGlobalType] = items;
+    globalListData[currentGlobalType] = Array.isArray(saved) ? saved : items;
     clearBatchInput(els.globalListBatchInput);
     renderGlobalList();
     showToast(`全局${currentGlobalType === "allow" ? "白名单" : "黑名单"}已覆写`);
@@ -991,11 +991,11 @@ async function appendGlobalList() {
   }
   const merged = [...existingItems, ...newItems];
   try {
-    await api.safePost("settings/global-list", {
+    const saved = await api.safePost("settings/global-list", {
       type: currentGlobalType,
       items: merged,
     });
-    globalListData[currentGlobalType] = merged;
+    globalListData[currentGlobalType] = Array.isArray(saved) ? saved : merged;
     clearBatchInput(els.globalListBatchInput);
     renderGlobalList();
     const skipped = batchItems.length - newItems.length;

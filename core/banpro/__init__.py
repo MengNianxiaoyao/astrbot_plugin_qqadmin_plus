@@ -57,6 +57,12 @@ class BanproHandle:
     async def spamming_ban(self, event: AiocqhttpMessageEvent):
         await self.spam.spamming_ban(event)
 
+    # -----------生命周期-----------------
+
+    def stop(self):
+        """停止后台投票定时任务。"""
+        self.votes.stop()
+
     # -----------投票-----------------
 
     async def start_vote_mute(self, event, ban_time: int | None = None) -> str | None:

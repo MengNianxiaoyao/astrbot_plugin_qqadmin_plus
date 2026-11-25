@@ -45,7 +45,13 @@ class LotteryEngine:
     def schedule(self, lottery: Lottery):
         task = asyncio.create_task(self.wait_and_draw(lottery))
         self.tasks[lottery.group_id] = task
-        task.add_done_callback(lambda _t, gid=lottery.group_id: self.tasks.pop(gid, None))
+        task.add_done_callback(lambda t, gid=lottery.group_id: self._drop_task(self.tasks, gid, t))
+
+    @staticmethod
+    def _drop_task(mapping: dict[str, asyncio.Task], group_id: str, task: asyncio.Task) -> None:
+        """只移除自己那条：同群新任务可能已经覆盖，旧任务回调不能误删新任务。"""
+        if mapping.get(group_id) is task:
+            mapping.pop(group_id, None)
 
     def forget_task(self, group_id: str):
         task = self.tasks.pop(group_id, None)
@@ -194,15 +200,21 @@ class LotteryEngine:
             return
         task = asyncio.create_task(self._retry_draw(lottery, reason))
         self._draw_retries[gid] = task
-        task.add_done_callback(lambda _t, gid=gid: self._draw_retries.pop(gid, None))
+        task.add_done_callback(lambda t, gid=gid: self._drop_task(self._draw_retries, gid, t))
 
     async def _retry_draw(self, lottery: Lottery, reason: str):
-        await asyncio.sleep(DRAW_RETRY_DELAY)
-        if lottery.closed:
-            return
-        # 重试必须真正探测一次，不能被上次失败设置的静默窗口挡住
-        self._client_retry_at = 0.0
-        await self.safe_draw(lottery, reason=reason)
+        # 连接可能持续未就绪：保持单任务循环重试，直到开奖成功/被取消；
+        # safe_draw 内部的 schedule_draw_retry 会因当前任务未结束而 no-op。
+        while not lottery.closed:
+            await asyncio.sleep(DRAW_RETRY_DELAY)
+            if lottery.closed:
+                return
+            # 重试必须真正探测一次，不能被上次失败设置的静默窗口挡住
+            self._client_retry_at = 0.0
+            await self.safe_draw(lottery, reason=reason)
+            if lottery.closed or not lottery.closing:
+                # 已开奖/已取消，或其他异常已回滚，交给正常流程
+                return
 
     async def cancel_draw(self, lottery: Lottery):
         """取消抽奖：不抽奖、不发奖、不写历史；同时停掉定时与延迟重试任务。"""
@@ -223,7 +235,11 @@ class LotteryEngine:
         if lottery.closed:
             return []
         # 开奖前先确认连接可用；未就绪不闭锁、不写历史，整场推迟到重试
-        if not await self.client_for(lottery):
+        client_ready = await self.client_for(lottery)
+        # 等待连接期间可能被取消或已被另一个开奖任务结算，必须重新确认
+        if lottery.closed:
+            return []
+        if not client_ready:
             lottery.closing = True
             await self.handle.save()
             raise LotteryNotReadyError(lottery.group_id)

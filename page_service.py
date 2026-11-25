@@ -468,9 +468,10 @@ class QQAdminPageService:
             return result
 
         if field_type == "bool":
-            parsed = parse_bool(value)
+            parsed = parse_bool(value, default=None)
             if parsed is None:
-                raise ValueError(f"invalid bool value: {value}")
+                # 缺省/非法值回退到当前配置，而不是悄悄改成 False
+                return bool(parse_bool(current, default=False))
             return parsed
 
         if field_type == "int":

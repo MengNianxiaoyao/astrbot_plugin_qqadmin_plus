@@ -74,6 +74,7 @@ class QQAdminApp:
         self.spawn(self.lottery.initialize())
 
     async def stop(self) -> None:
+        self.banpro.stop()
         await self.lottery.stop()
         await self.curfew.stop_all_tasks()
         await self._cancel_bg_tasks()

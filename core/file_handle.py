@@ -1,4 +1,4 @@
-"""群文件：上传/删除/查看。路径形态统一经 _parse_path 归一化为 (folder, file)。
+"""群文件：上传/删除/查看。路径形态统一经根目录快照解析为 (folder, file)。
 
 路径规则：纯名先按真实目录判文件夹/文件（含点文件夹名优先判文件夹）；
 数字按列表序号解析；"a/b" 左为文件夹、右为文件名（数字同样按序号解）。
@@ -6,6 +6,7 @@
 
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from functools import wraps
 
 from astrbot.api import logger
@@ -35,23 +36,61 @@ def _friendly_errors(action: str):
     return decorator
 
 
+@dataclass
+class RootFiles:
+    """一次根目录快照：文件/文件夹元数据与序号映射，命令内复用避免重复 RPC。"""
+
+    folders: list[dict]
+    files: list[dict]
+    mapping: dict[int, tuple[str, str]]
+    folder_files: dict[str, list[dict]] = field(default_factory=dict)
+
+
 class FileHandle:
     def __init__(self, config: PluginConfig):
         self.data_dir = config.file_dir
 
-    async def _parse_path(self, event: AiocqhttpMessageEvent, path: str) -> tuple[str | None, str | None]:
+    async def _load_root(self, event: AiocqhttpMessageEvent) -> RootFiles:
+        response = await event.bot.get_group_root_files(group_id=int(event.get_group_id()))
+        folders = extract_dicts(response, "folders")
+        files = extract_dicts(response, "files")
+        _, mapping = self._build_listing(folders, files)
+        return RootFiles(folders=folders, files=files, mapping=mapping)
+
+    @staticmethod
+    def _find_folder(root: RootFiles, folder_name: str) -> dict | None:
+        return next((folder for folder in root.folders if folder.get("folder_name") == folder_name), None)
+
+    async def _load_folder_files(self, event: AiocqhttpMessageEvent, root: RootFiles, folder: dict) -> list[dict]:
+        """读取文件夹内容；同一命令内按文件夹名缓存，序号解析与后续操作共用一次请求。"""
+        folder_name = str(folder.get("folder_name", ""))
+        if folder_name in root.folder_files:
+            return root.folder_files[folder_name]
+        folder_id = folder.get("folder_id")
+        if folder_id is None:
+            return []
+        response = await event.bot.get_group_files_by_folder(
+            group_id=int(event.get_group_id()),
+            folder_id=folder_id,
+        )
+        files = extract_dicts(response, "files")
+        root.folder_files[folder_name] = files
+        return files
+
+    async def _resolve_path(
+        self, event: AiocqhttpMessageEvent, root: RootFiles, path: str
+    ) -> tuple[str | None, str | None]:
         """
-        解析路径，返回 (folder_name, file_name)
+        在已加载的根目录快照上解析路径，返回 (folder_name, file_name)
         支持：
         - "文件夹名" -> (folder_name, None)
         - "文件.zip" -> (None, file_name)
         - "文件夹名/文件.zip" -> (folder_name, file_name)
-        - "数字" -> 用缓存解析 (folder or file)
-        - "数字/数字" -> 用缓存解析 (folder序号/文件序号)
+        - "数字" -> 用快照解析 (folder or file)
+        - "数字/数字" -> 用快照解析 (folder序号/文件序号)
         """
         path = path.strip()
-        response = await event.bot.get_group_root_files(group_id=int(event.get_group_id()))
-        _, mapping = self._get_folder_info(response, "")
+        mapping = root.mapping
 
         def resolve_index(index: str, kind_filter: str | None = None) -> tuple[str | None, str | None]:
             """根据序号解析文件夹名或文件名，可选过滤类型，返回(kind, name)"""
@@ -72,17 +111,12 @@ class FileHandle:
             _, folder_name = resolve_index(left, "folder")
             folder_name = folder_name or left  # 左边不是数字就直接当字符串用
 
-            # 如果右边是数字，需要进入对应文件夹再解析（复用已拉取的 response 避免二次请求）
+            # 如果右边是数字，需要进入对应文件夹再解析（复用根目录快照与文件夹缓存）
             if right.isdigit() and folder_name:
-                target_folder = next(
-                    (f for f in extract_dicts(response, "folders") if f.get("folder_name") == folder_name), None
-                )
+                target_folder = self._find_folder(root, folder_name)
                 if target_folder:
-                    folder_files = await event.bot.get_group_files_by_folder(
-                        group_id=int(event.get_group_id()),
-                        folder_id=target_folder["folder_id"],
-                    )
-                    _, file_mapping = self._get_folder_info(folder_files, "")
+                    files = await self._load_folder_files(event, root, target_folder)
+                    _, file_mapping = self._build_listing([], files)
                     idx = int(right)
                     if idx in file_mapping and file_mapping[idx][0] == "file":
                         file_name = file_mapping[idx][1]
@@ -108,26 +142,18 @@ class FileHandle:
             # 兜底：含点按文件，否则按文件夹
             return (None, path) if "." in path else (path, None)
 
-    async def _get_folder(self, event: AiocqhttpMessageEvent, folder_name: str) -> dict | None:
-        """从根目录下找到指定文件夹, 返回文件夹数据"""
-        response = await event.bot.get_group_root_files(group_id=int(event.get_group_id()))
-        return next(
-            (folder for folder in extract_dicts(response, "folders") if folder_name == folder.get("folder_name")),
-            None,
-        )
-
-    def _get_folder_info(self, data: dict, title: str) -> tuple[str, dict[int, tuple[str, str]]]:
-        """从响应数据里提取文件夹和文件，每个文件夹下文件序号从 1 开始"""
+    def _build_listing(self, folders: list[dict], files: list[dict], title: str = "") -> tuple[str, dict]:
+        """从文件夹/文件对象构造展示文本与序号映射，每个文件夹下文件序号从 1 开始。"""
         info = [title]
-        mapping = {}
+        mapping: dict[int, tuple[str, str]] = {}
 
         idx = 1
-        for folder in extract_dicts(data, "folders"):
+        for folder in folders:
             info.append(f"▶{idx}. {folder.get('folder_name', '未知')}")
             mapping[idx] = ("folder", folder.get("folder_name", ""))
             idx += 1
 
-        for file in extract_dicts(data, "files"):
+        for file in files:
             info.append(f"📄{idx}. {file.get('file_name', '未知')}")
             mapping[idx] = ("file", file.get("file_name", ""))
             idx += 1
@@ -151,24 +177,24 @@ class FileHandle:
 
         if upload_time := file.get("upload_time", 0):
             lines.append(f"上传时间：{format_time(upload_time, '%Y-%m-%d %H:%M:%S')}")
-        dead_time = file.get("dead_time", 0)
+        dead_time = file.get("dead_time") or 0
         lines.append(f"过期时间：{'永久有效' if dead_time == 0 else format_time(dead_time, '%Y-%m-%d %H:%M:%S')}")
         if modify_time := file.get("modify_time", 0):
             lines.append(f"修改时间：{format_time(modify_time, '%Y-%m-%d %H:%M:%S')}")
         logger.debug(f"文件ID：{file.get('file_id', '未知')}")
         return "\n".join(lines)
 
-    async def _get_file_in_folder(self, event: AiocqhttpMessageEvent, folder_name: str, file_name: str):
-        """返回目标文件夹和文件对象"""
+    async def _get_file_in_folder(
+        self, event: AiocqhttpMessageEvent, root: RootFiles, folder_name: str, file_name: str
+    ):
+        """返回目标文件夹和文件对象，复用根目录快照与文件夹内容缓存。"""
         if not folder_name:
             return None, None
-        target_folder = await self._get_folder(event, folder_name=folder_name)
+        target_folder = self._find_folder(root, folder_name)
         if not target_folder:
             return None, None
-        response = await event.bot.get_group_files_by_folder(
-            group_id=int(event.get_group_id()), folder_id=target_folder["folder_id"]
-        )
-        file = next((f for f in extract_dicts(response, "files") if f.get("file_name") == file_name), None)
+        files = await self._load_folder_files(event, root, target_folder)
+        file = next((f for f in files if f.get("file_name") == file_name), None)
         return target_folder, file
 
     async def _save_temp_file(self, event: AiocqhttpMessageEvent, file_name: str):
@@ -182,25 +208,26 @@ class FileHandle:
                 logger.info(f"正在从URL下载文件：{url}")
                 # 文件名可能源自用户输入：取 basename 并清洗，杜绝 '..' 路径穿越逃出 data_dir
                 safe_name = re.split(r"[\\/]", str(file_name))[-1].strip()
+                safe_name = re.sub(r'[<>:"|?*]', "_", safe_name)
                 if not safe_name or safe_name in {".", ".."}:
                     logger.error(f"非法文件名，已拒绝保存：{file_name}")
                     return None
                 file_path = self.data_dir / safe_name
-                await download_file(url, file_path)
-                if file_path.exists():
+                # 只认本次下载结果：同名旧文件残留时不能当成本次上传内容
+                if await download_file(url, file_path):
                     return file_path
                 logger.error(f"下载文件失败：{url}")
             else:
                 return None
 
-    async def _ensure_folder(self, event: AiocqhttpMessageEvent, folder_name: str):
+    async def _ensure_folder(self, event: AiocqhttpMessageEvent, root: RootFiles, folder_name: str):
         """
         确保群文件夹存在，如果不存在则创建，返回目标文件夹数据
         """
         group_id = int(event.get_group_id())
         client = event.bot
 
-        target_folder = await self._get_folder(event, folder_name)
+        target_folder = self._find_folder(root, folder_name)
         if target_folder:
             return target_folder
 
@@ -215,13 +242,15 @@ class FileHandle:
             )
         except Exception as e:
             logger.warning(f"创建群文件夹失败: {e}")
-        # 再次获取，确保拿到 folder_id
-        return await self._get_folder(event, safe_name)
+        # 创建接口不保证返回 folder_id，重新拉一次根目录快照定位
+        created = await self._load_root(event)
+        return self._find_folder(created, safe_name)
 
     @_friendly_errors("上传群文件")
     async def upload_group_file(self, event: AiocqhttpMessageEvent, path: str):
         """上传群文件"""
-        folder_name, file_name = await self._parse_path(event, path)
+        root = await self._load_root(event)
+        folder_name, file_name = await self._resolve_path(event, root, path)
         if not file_name:
             return "路径未包含文件名，无法上传"
 
@@ -235,7 +264,7 @@ class FileHandle:
 
         folder_id = None
         if folder_name:
-            target_folder = await self._ensure_folder(event, folder_name)
+            target_folder = await self._ensure_folder(event, root, folder_name)
             if not target_folder:
                 return f"群文件夹【{folder_name}】创建或查找失败，已取消上传"
             folder_id = target_folder["folder_id"]
@@ -264,7 +293,8 @@ class FileHandle:
     @_friendly_errors("删除群文件")
     async def delete_group_file(self, event: AiocqhttpMessageEvent, path: str):
         """删除群文件夹或群文件"""
-        folder_name, file_name = await self._parse_path(event, path)
+        root = await self._load_root(event)
+        folder_name, file_name = await self._resolve_path(event, root, path)
         if not folder_name and not file_name:
             return "请指定要删除的文件夹或文件"
         group_id = int(event.get_group_id())
@@ -273,15 +303,11 @@ class FileHandle:
         if file_name:
             file = None
             if folder_name:
-                target_folder, file = await self._get_file_in_folder(event, folder_name, file_name)
+                target_folder, file = await self._get_file_in_folder(event, root, folder_name, file_name)
                 if not target_folder or not file:
                     return f"{path} 不存在"
             else:
-                response = await event.bot.get_group_root_files(group_id=group_id)
-                file = next(
-                    (f for f in extract_dicts(response, "files") if file_name == f.get("file_name")),
-                    None,
-                )
+                file = next((f for f in root.files if f.get("file_name") == file_name), None)
             if file:
                 payload = {"group_id": group_id, "file_id": file["file_id"]}
                 if file.get("busid"):
@@ -291,7 +317,7 @@ class FileHandle:
 
         # 删除文件夹
         elif folder_name and not file_name:
-            if target_folder := await self._get_folder(event, folder_name):
+            if target_folder := self._find_folder(root, folder_name):
                 await event.bot.delete_group_folder(group_id=group_id, folder_id=target_folder["folder_id"])
                 return f"已删除群文件夹：▶{folder_name}"
             else:
@@ -301,35 +327,30 @@ class FileHandle:
     @_friendly_errors("查看群文件")
     async def view_group_file(self, event: AiocqhttpMessageEvent, path) -> str:
         """查看群文件/目录，path 可以是 文件夹名、文件名 或 文件夹名/文件名"""
-        group_id = int(event.get_group_id())
-        client = event.bot
+        root = await self._load_root(event)
         if not path:
             # 查看根目录
-            response = await client.get_group_root_files(group_id=group_id)
-            text, _ = self._get_folder_info(response, "【群文件根目录】")
+            text, _ = self._build_listing(root.folders, root.files, "【群文件根目录】")
             return text
 
-        folder_name, file_name = await self._parse_path(event, str(path))
+        folder_name, file_name = await self._resolve_path(event, root, str(path))
 
         if folder_name and file_name:
-            target_folder, file = await self._get_file_in_folder(event, folder_name, file_name)
+            target_folder, file = await self._get_file_in_folder(event, root, folder_name, file_name)
             if not file:
                 return f"未能找到群文件：📄{file_name}"
             return self._format_file_info(file)
 
         if folder_name and not file_name:
-            target_folder = await self._get_folder(event, folder_name)
+            target_folder = self._find_folder(root, folder_name)
             if target_folder:
-                response = await client.get_group_files_by_folder(
-                    group_id=group_id, folder_id=target_folder["folder_id"]
-                )
-                text, _ = self._get_folder_info(response, f"【{folder_name}】")
+                files = await self._load_folder_files(event, root, target_folder)
+                text, _ = self._build_listing([], files, f"【{folder_name}】")
                 return text
             else:
                 # 根目录单文件
-                response = await client.get_group_root_files(group_id=group_id)
                 if file := next(
-                    (f for f in extract_dicts(response, "files") if folder_name == f.get("file_name")),
+                    (f for f in root.files if folder_name == f.get("file_name")),
                     None,
                 ):
                     return self._format_file_info(file)
@@ -337,9 +358,8 @@ class FileHandle:
                     return f"未能找到【{folder_name}】"
         elif not folder_name and file_name:
             # 根目录文件
-            response = await client.get_group_root_files(group_id=group_id)
             if file := next(
-                (f for f in extract_dicts(response, "files") if file_name == f.get("file_name")),
+                (f for f in root.files if file_name == f.get("file_name")),
                 None,
             ):
                 return self._format_file_info(file)

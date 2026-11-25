@@ -13,6 +13,7 @@ from ...utils import (
     parse_cq_to_chain,
     resolve_allow_ids,
     safe_int,
+    unwrap_data,
 )
 from .review import JoinReviewer
 from .state import JoinState
@@ -99,7 +100,9 @@ class JoinEvents:
         # 登记本次申请，用于多群同时申请判定
         self.state.register_application(uid, gid, flag, await self._get_group_name(gid))
         try:
-            info = await client.get_stranger_info(user_id=int(uid)) or {}
+            info = unwrap_data(await client.get_stranger_info(user_id=int(uid))) or {}
+            if not isinstance(info, dict):
+                info = {}
         except Exception as e:
             logger.warning(f"获取申请人 {uid} 资料失败，转人工审核: {e}")
             info = {}

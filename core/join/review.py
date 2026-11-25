@@ -85,8 +85,11 @@ class JoinReviewer:
         if not uids:
             return 0
 
+        semaphore = asyncio.Semaphore(8)
+
         async def _is_member(uid: str) -> str | None:
-            info = await get_group_member(client, gid, uid, timeout_secs=10, no_cache=True)
+            async with semaphore:
+                info = await get_group_member(client, gid, uid, timeout_secs=10, no_cache=True)
             return uid if info else None
 
         cleared = 0
@@ -140,6 +143,7 @@ class JoinReviewer:
             for task in tasks:
                 if not task.done():
                     task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         self._other_group_cache.set(cache_key, result)
         return result

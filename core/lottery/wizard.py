@@ -13,7 +13,7 @@ from astrbot.core.utils.session_waiter import (
     session_waiter,
 )
 
-from ...utils import send_lines
+from ...utils import extract_list, send_lines
 from .engine import LotteryConflictError
 from .models import MAX_COPIES, MAX_GROUPS, MAX_PARTICIPANTS, WIZARD_TIMEOUT
 from .parse import (
@@ -251,16 +251,13 @@ class LotteryWizard:
             return None
 
         names: dict[str, str] = {}
-        if isinstance(raw, list):
-            for item in raw:
-                if not isinstance(item, dict):
-                    continue
-                gid = str(item.get("group_id") or "")
-                if not gid.isdigit():
-                    continue
-                name = str(item.get("group_name") or item.get("group_remark") or gid).strip() or gid
-                name = name.replace("\r", " ").replace("\n", " ")
-                names[gid] = name[:20]
+        for item in extract_list(raw):
+            gid = str(item.get("group_id") or "")
+            if not gid.isdigit():
+                continue
+            name = str(item.get("group_name") or item.get("group_remark") or gid).strip() or gid
+            name = name.replace("\r", " ").replace("\n", " ")
+            names[gid] = name[:20]
         return sorted(names.items(), key=lambda item: int(item[0]))
 
     async def _send_group_choices(self, event: AiocqhttpMessageEvent, candidates: list[tuple[str, str]]):

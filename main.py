@@ -102,8 +102,15 @@ class QQAdminPlugin(Star):
     @filter.command("申请头衔", alias={"我要头衔"})
     @perm_required_for("set_group_special_title_me")
     async def set_group_special_title_me(self, event: AiocqhttpMessageEvent, special_title: str | int = ""):
-        """申请头衔 <新头衔>"""
-        if result := await self.app.normal.set_group_special_title(event, special_title=special_title):
+        """申请头衔 <新头衔>（只能给自己设置）"""
+        # 公开命令任何成员都可用，目标必须固定为发送者，否则 @ 他人即可越权改别人的头衔
+        sender_id = event.get_sender_id()
+        if not sender_id:
+            yield event.plain_result("无法识别你的QQ号")
+            return
+        if result := await self.app.normal.set_group_special_title(
+            event, target_id=sender_id, special_title=special_title
+        ):
             yield event.plain_result(result)
 
     @filter.command("踢了")
@@ -370,7 +377,7 @@ class QQAdminPlugin(Star):
         path: str | int | None = None,
     ):
         "上传群文件 <文件夹名/文件名 | 文件名>"
-        if result := await self.app.file.upload_group_file(event, str(path)):
+        if result := await self.app.file.upload_group_file(event, "" if path is None else str(path)):
             yield event.plain_result(result)
 
     @filter.command("删除群文件")
@@ -381,7 +388,7 @@ class QQAdminPlugin(Star):
         path: str | int | None = None,
     ):
         "删除群文件 <文件夹名/序号> <文件名/序号>"
-        if result := await self.app.file.delete_group_file(event, str(path)):
+        if result := await self.app.file.delete_group_file(event, "" if path is None else str(path)):
             yield event.plain_result(result)
 
     @filter.command("查看群文件")

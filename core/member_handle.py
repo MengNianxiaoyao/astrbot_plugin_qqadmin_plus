@@ -199,6 +199,9 @@ class MemberHandle:
 
         async with lock:
             sender_id = event.get_sender_id()
+            # AstrBot 命令参数可能以字符串传入，先归一化，非法值回退本群默认
+            inactive_days = safe_int(inactive_days, None) if inactive_days is not None else None
+            under_level = safe_int(under_level, None) if under_level is not None else None
             if inactive_days is None:
                 inactive_days = await self.db.get(group_id, "clear_inactive_days", 30)
             if under_level is None:

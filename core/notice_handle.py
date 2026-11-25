@@ -3,6 +3,7 @@
 import asyncio
 import textwrap
 import time
+from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.message_components import Image
@@ -41,13 +42,20 @@ class NoticeHandle:
                 refs = [seg.url for seg in event.get_messages() if isinstance(seg, Image) and seg.url]
             image_url = next((ref for ref in refs if ref.startswith(("http://", "https://"))), None)
         if image_url:
-            img_name = f"{gid}_{generate_timestamp_id()}.png"
-            temp_path = self.cfg.group_notice_dir / img_name
+            if image_url.startswith(("http://", "https://")):
+                img_name = f"{gid}_{generate_timestamp_id()}.png"
+                temp_path = self.cfg.group_notice_dir / img_name
 
-            logger.debug(f"Group notice image temp path: {temp_path}")
-            image_path = await download_file(image_url, temp_path)
-            if not image_path:
-                return "图片获取失败"
+                logger.debug(f"Group notice image temp path: {temp_path}")
+                image_path = await download_file(image_url, temp_path)
+                if not image_path:
+                    return "图片获取失败"
+            else:
+                # LLM 工具允许直接给本地图片路径，无需再下载
+                local_path = Path(image_url)
+                if not await asyncio.to_thread(local_path.is_file):
+                    return "图片获取失败"
+                image_path = local_path
 
         payload = {
             "group_id": int(gid),

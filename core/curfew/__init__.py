@@ -19,7 +19,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
 
 from ...config import PluginConfig, get_plugin_timezone
 from ...group_cache import iter_aiocqhttp_adapters
-from ...utils import parse_clock
+from ...utils import parse_clock, unwrap_data
 from .curfew_manager import BotCurfewManager
 from .curfew_store import CurfewStore
 
@@ -55,7 +55,9 @@ class CurfewHandle:
 
         # client 直接获取 bot_id
         try:
-            login_data = await client.get_login_info() or {}
+            login_data = unwrap_data(await client.get_login_info()) or {}
+            if not isinstance(login_data, dict):
+                login_data = {}
             user_id = login_data.get("user_id")
             bot_id = str(user_id) if user_id is not None else None
         except Exception:
@@ -78,6 +80,13 @@ class CurfewHandle:
                 return
 
         if bot_id in self.curfew_managers:
+            existing = self.curfew_managers[bot_id]
+            if existing.bot is client:
+                return
+            # 平台适配器被重载：bot_id 不变但 client 已换成新对象，必须重新绑定，
+            # 否则后续定时任务会继续调用已关闭的旧连接。
+            logger.info(f"{inst.metadata.id}({bot_id}) 平台实例已更换，重新绑定宵禁 client")
+            await existing.rebind(client)
             return
 
         # 宵禁初始化
@@ -98,6 +107,30 @@ class CurfewHandle:
                 for r in results:
                     if isinstance(r, Exception):
                         logger.error(f"宵禁初始化子任务异常: {r}")
+            await self._prune_stale_managers()
+
+    async def _prune_stale_managers(self) -> None:
+        """清理平台实例已被移除的 bot manager，停掉其仍指向旧 client 的定时任务。"""
+        clients: list = []
+        for inst in iter_aiocqhttp_adapters(self.context):
+            try:
+                client = inst.get_client()
+            except Exception:
+                return  # 无法确认当前实例，保守跳过清理
+            if client is None:
+                return
+            clients.append(client)
+        if not clients:
+            return
+
+        current_ids = {id(client) for client in clients}
+        stale = [(bot_id, mgr) for bot_id, mgr in self.curfew_managers.items() if id(mgr.bot) not in current_ids]
+        for bot_id, mgr in stale:
+            for cw in list(mgr.tasks.values()):
+                cw.stop_curfew_task()
+            mgr.tasks.clear()
+            self.curfew_managers.pop(bot_id, None)
+            logger.info(f"宵禁管理器 {bot_id} 的平台实例已不存在，已停止旧任务")
 
     async def start_curfew(
         self,

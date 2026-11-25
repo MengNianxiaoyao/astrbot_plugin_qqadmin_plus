@@ -270,7 +270,7 @@ class LotteryHandle:
         await self.ensure_ready()
         group_id = event.get_group_id()
         targets = get_ats(event)
-        keyword = (keyword or "").strip()
+        keyword = str(keyword or "").strip()
         history = self.history.get(group_id, [])
 
         if keyword in {"往期", "往期抽奖", "往期记录", "历史", "记录"} or (keyword.isdigit() and not targets):

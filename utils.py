@@ -103,7 +103,9 @@ async def get_nickname(
     # 群资料没拿到就降级到陌生人资料
     if not info:
         try:
-            info = await asyncio.wait_for(client.get_stranger_info(user_id=uid), timeout_secs) or {}
+            info = unwrap_data(await asyncio.wait_for(client.get_stranger_info(user_id=uid), timeout_secs)) or {}
+            if not isinstance(info, dict):
+                info = {}
         except Exception:
             info = {}
 
@@ -373,7 +375,8 @@ def parse_cq_to_chain(text: str, allowed_roots: list[Path] | None = None) -> lis
                 logger.warning(f"CQ at 缺少合法 qq 参数,保留原文: {raw}")
                 chain.append(Plain(raw))
         elif cq_type == "image":
-            file_path = params.get("file") or params.get("url") or ""
+            # OneBot 的 file 常是本地文件名，url 才是可访问地址；优先用 url
+            file_path = params.get("url") or params.get("file") or ""
             file_path = file_path.strip()
             if not file_path:
                 logger.warning(f"CQ image 缺少 file/url 参数,保留原文: {raw}")

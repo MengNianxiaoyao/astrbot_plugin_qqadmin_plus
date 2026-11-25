@@ -56,9 +56,15 @@ class QQAdminDB:
             async with self._conn.execute("SELECT group_id, data FROM groups;") as cur:
                 async for row in cur:
                     try:
-                        self._cache[row["group_id"]] = json.loads(row["data"])
+                        data = json.loads(row["data"])
                     except Exception:
                         logger.exception("解析 group 数据失败: %s", row["group_id"])
+                        continue
+                    if not isinstance(data, dict):
+                        # JSON 合法但不是对象（手改/旧版本残留）时忽略该行，避免后续 .get() 崩溃
+                        logger.warning("群配置不是 JSON 对象，已忽略: %s", row["group_id"])
+                        continue
+                    self._cache[row["group_id"]] = data
 
             # 一次性迁移无 marker 的历史行：与默认值一致的删行（缺席即跟随），
             # 其余打上显式标记落库。此后跟随判定只看 marker，不再按值比较。
@@ -143,8 +149,13 @@ class QQAdminDB:
             if key not in data:
                 data[key] = copy.deepcopy(default)
                 changed = True
-            elif isinstance(default, dict) and isinstance(data[key], dict):
-                changed = self._reconcile_group_data(data[key], default) or changed
+            elif isinstance(default, dict):
+                if not isinstance(data[key], dict):
+                    # 手改/旧版本残留可能把嵌套对象写成标量，结构对齐时重置回默认形状
+                    data[key] = copy.deepcopy(default)
+                    changed = True
+                else:
+                    changed = self._reconcile_group_data(data[key], default) or changed
         return changed
 
     # ============================== 基础：确保配置存在 ==============================

@@ -13,7 +13,7 @@ from ...config import PluginConfig
 from ...data import QQAdminDB
 from ...permission.levels import PermLevel
 from ...permission.manager import PermissionManager
-from ...utils import get_nickname, get_target_ids
+from ...utils import get_nickname, get_target_ids, safe_int
 
 
 class VoteSession:
@@ -114,6 +114,8 @@ class VoteSession:
         group_id = event.get_group_id()
         group_config = self.db.get_group_snapshot(group_id)
         if kind == "mute":
+            # 命令参数可能以字符串传入，先归一化再交给范围解析
+            ban_time = safe_int(ban_time, None)
             ban_time = self.cfg.get_ban_time_with_range(group_config.get("random_ban_time"), ban_time)
         # 结算不依赖发起时的 event 会话：预捕获 client 与群号，TTL 后直发群消息
         bot_client = event.bot
@@ -153,6 +155,13 @@ class VoteSession:
         self._settle_tasks.add(task)
         task.add_done_callback(self._settle_tasks.discard)
         return start_msg
+
+    def stop(self):
+        """插件停止时取消所有待结算任务并丢弃投票状态，避免重载后旧任务仍执行处罚。"""
+        for task in self._settle_tasks:
+            task.cancel()
+        self._settle_tasks.clear()
+        self.vote_cache.clear()
 
     async def cancel_vote_mute(self, event: AiocqhttpMessageEvent) -> str | None:
         """取消当前群正在进行的投票（仅发起人/管理员；权限由装饰器校验）；结算任务醒来后见记录已消失会自动退出"""
