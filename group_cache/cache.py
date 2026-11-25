@@ -8,7 +8,7 @@
 读路径：list_groups（列表）/ get_group（单群详情）/ list_groups_with_bot_roles；
 并发原语：_race_clients 多连接竞速首个有效结果，_gather_limited 限流 8。
 失效判定唯一出口 is_stale_group：live 或人数>0 即存活，否则计票，
-连续 STALE_VOTES_REQUIRED 次才判失效，避免单次抖动误删。
+连续 STALE_VOTES_REQUIRED 次刷新都缺（且刷新必须拿到实时数据）才判失效，避免抖动误删。
 """
 
 import asyncio
@@ -89,8 +89,11 @@ class QQGroupInfoCache:
         self._bot_role_cache: dict[str, str] = {}
         self._bot_role_ts: dict[str, float] = {}
         self._client_bot_ids: dict[int, str] = {}
-        # 失效投票计数：单次 API 抖动不删库，连续多次判定失效才清理
-        self._stale_votes: dict[str, int] = {}
+        # 失效投票：按刷新代次计票（同一次刷新最多一票，记录 (代次, 票数)）；
+        # 只有“拿到过实时群数据”的刷新才允许计票，避免整体失败时把 DB 兜底条目误判失效。
+        self._stale_votes: dict[str, tuple[int, int]] = {}
+        self._refresh_seq = 0
+        self._last_refresh_had_live = False
 
     # ---------- 对外接口 ----------
 
@@ -152,6 +155,7 @@ class QQGroupInfoCache:
         self._group_clients.pop(normalized_group_id, None)
         self._bot_role_cache.pop(normalized_group_id, None)
         self._bot_role_ts.pop(normalized_group_id, None)
+        self._stale_votes.pop(normalized_group_id, None)
 
     @property
     def last_refresh_error(self) -> str | None:
@@ -159,14 +163,18 @@ class QQGroupInfoCache:
         return self._last_refresh_error
 
     def is_stale_group(self, group_info: dict[str, Any]) -> bool:
-        """群存活判定：live 来源或人数有效即存活；否则计票，连续失效达标才判 stale。
+        """群存活判定：live 来源或人数有效即存活；否则按刷新代次计票。
 
         存活策略的唯一 owner（判定 + 计票 + 删除都在本模块）。
+        只有最近一次刷新真的拿到过实时群数据时才计票；无可用连接或接口整体失败时，
+        列表里的群只是 DB 兜底条目（人数必为 0），不能据此判失效。
         "__default__" 字面量对应 page_service.DEFAULT_GROUP_ID（避免循环导入而未引用），
         该条目不会进入缓存路径，此处仅作防御。
         """
         group_id = str(group_info.get("group_id", "")).strip()
         if not group_id or group_id == "__default__":
+            return False
+        if not self._last_refresh_had_live:
             return False
         # live 来源或人数有效 → 存活，清除投票
         if group_info.get("source") == "live":
@@ -179,11 +187,18 @@ class QQGroupInfoCache:
         if member_count > 0:
             self._stale_votes.pop(group_id, None)
             return False
-        votes = self._stale_votes.get(group_id, 0) + 1
+
+        # 同一次刷新内无论查询多少次都只记一票；票数跨刷新累积，群复活时
+        # is_stale_group 会主动清掉投票，因此无需限制为“上一次刷新”。
+        stored = self._stale_votes.get(group_id)
+        if stored is None or stored[0] != self._refresh_seq:
+            votes = stored[1] + 1 if stored else 1
+            self._stale_votes[group_id] = (self._refresh_seq, votes)
+        else:
+            votes = stored[1]
         if votes >= STALE_VOTES_REQUIRED:
             self._stale_votes.pop(group_id, None)
             return True
-        self._stale_votes[group_id] = votes
         return False
 
     async def delete_group_data(self, group_id: str | int | None) -> str:
@@ -227,7 +242,10 @@ class QQGroupInfoCache:
             if missing_detail_group_ids:
                 await self._hydrate_missing_groups(merged_groups, group_clients, missing_detail_group_ids)
 
-            self._record_refresh_error(bool(clients), merged_groups, refresh_errors)
+            live_count = self._record_refresh_error(bool(clients), merged_groups, refresh_errors)
+            # 本次刷新是否真的拿到实时数据：决定后续能否据此判群失效
+            self._last_refresh_had_live = bool(clients) and live_count > 0
+            self._refresh_seq += 1
 
             groups = list(merged_groups.values())
             self._attach_cached_bot_roles(groups)
@@ -278,8 +296,8 @@ class QQGroupInfoCache:
         has_clients: bool,
         merged_groups: dict[str, dict[str, Any]],
         refresh_errors: list[str],
-    ) -> None:
-        """记录本次刷新的面板可见错误：拿到实时数据即视为成功并清零。"""
+    ) -> int:
+        """记录本次刷新的面板可见错误：拿到实时数据即视为成功并清零。返回实时群数量。"""
         live_count = sum(1 for group in merged_groups.values() if group.get("source") == "live")
         if not has_clients:
             self._last_refresh_error = "群列表刷新失败：无可用的 aiocqhttp 连接，请检查机器人是否在线"
@@ -288,6 +306,7 @@ class QQGroupInfoCache:
             self._last_refresh_error = f"群列表刷新失败：{detail[:500]}"
         else:
             self._last_refresh_error = None
+        return live_count
 
     # ---------- 抓取层 ----------
 

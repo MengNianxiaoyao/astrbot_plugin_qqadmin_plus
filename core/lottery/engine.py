@@ -180,7 +180,7 @@ class LotteryEngine:
     async def safe_draw(
         self, lottery: Lottery, event: AiocqhttpMessageEvent | None = None, reason: str = ""
     ) -> list[str]:
-        """开奖兜底：连接未就绪时整场推迟；异常时回滚闭锁状态，避免永久卡在“正在开奖”。"""
+        """开奖兜底：连接未就绪时整场推迟；提交前异常时回滚闭锁状态，避免永久卡在“正在开奖”。"""
         try:
             return await self.draw(lottery, event=event, reason=reason)
         except LotteryNotReadyError:
@@ -190,8 +190,11 @@ class LotteryEngine:
             return []
         except Exception as e:
             logger.error(f"抽奖开奖失败({lottery.group_id}): {e}", exc_info=True)
-            lottery.closed = False
-            lottery.closing = False
+            # 只有记录还在 active（尚未提交到历史）时才允许回滚；已提交后再复位会把
+            # 记录留在“不在 active、参与数据已清空”的状态，既不能重开也不能取消。
+            if any(self.handle.active.get(gid) is lottery for gid in lottery.groups):
+                lottery.closed = False
+                lottery.closing = False
             await self.handle.save(immediate=True)
             return []
 
@@ -263,7 +266,13 @@ class LotteryEngine:
             del records[MAX_HISTORY:]
         self.forget_task(lottery.group_id)
         await self.handle.save(immediate=True)
-        return await self.announce_result(lottery, event=event, reason=reason)
+        try:
+            return await self.announce_result(lottery, event=event, reason=reason)
+        except Exception as e:
+            # 状态已提交（移入历史、清空参与者并落库），公告失败不能再回滚：
+            # 否则记录既不在 active 也无法重开。记日志并放弃本轮提示。
+            logger.error(f"抽奖开奖公告发送失败({lottery.group_id}): {e}", exc_info=True)
+            return []
 
     # ============================== 发奖 / 通知 ==============================
 

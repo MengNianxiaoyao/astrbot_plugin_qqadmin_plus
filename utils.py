@@ -202,16 +202,44 @@ def get_target_ids(event: AiocqhttpMessageEvent) -> list[str]:
     return [replyer_id] if replyer_id else []
 
 
+def unwrap_data(result: Any) -> Any:
+    """解开 OneBot 响应外层的 ``{"data": ...}`` 包裹。
+
+    标准 aiocqhttp 的 ``call_action`` 已返回 data 字段本体；个别实现或二次封装
+    仍返回完整响应体。统一在此解开，避免同一兼容判断散落在各业务模块。
+    data 为非 dict/list（如 None）时不解，按原结果返回。
+    """
+    if isinstance(result, dict):
+        data = result.get("data")
+        if isinstance(data, dict | list):
+            return data
+    return result
+
+
+def extract_messages(result: Any) -> list[dict]:
+    """从群消息历史响应中提取消息列表，非 dict 条目直接丢弃。
+
+    兼容 {"messages": [...]}（aiocqhttp 已解开 data）、
+    {"data": {"messages": [...]}}（二次封装）与裸 list。
+    """
+    holder = unwrap_data(result)
+    if isinstance(holder, dict):
+        raw = holder.get("messages", []) or []
+        return [m for m in raw if isinstance(m, dict)]
+    if isinstance(holder, list):
+        return [m for m in holder if isinstance(m, dict)]
+    return []
+
+
 def extract_message_id(result) -> str | None:
     """从 send 类接口的返回结果中提取消息ID（兼容 dict / 带属性对象 / None 多种形态）。"""
     if result is None:
         return None
-    if isinstance(result, dict):
-        data = result.get("data")
-        if isinstance(data, dict) and data.get("message_id"):
-            return str(data["message_id"])
-        if result.get("message_id"):
-            return str(result["message_id"])
+    data = unwrap_data(result)
+    if isinstance(data, dict) and data.get("message_id"):
+        return str(data["message_id"])
+    if isinstance(result, dict) and result.get("message_id"):
+        return str(result["message_id"])
     mid = getattr(result, "message_id", None)
     return str(mid) if mid else None
 

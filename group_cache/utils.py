@@ -6,7 +6,7 @@
 
 from typing import Any
 
-from ..utils import safe_int
+from ..utils import safe_int, unwrap_data
 
 BOT_ROLE_PRIORITY = {
     "owner": 0,
@@ -23,22 +23,15 @@ def format_error(exc: BaseException) -> str:
 
 
 def extract_list(result: Any) -> list[dict[str, Any]]:
-    if isinstance(result, list):
-        return [item for item in result if isinstance(item, dict)]
-    if isinstance(result, dict):
-        data = result.get("data")
-        if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)]
+    data = unwrap_data(result)
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
     return []
 
 
 def extract_object(result: Any) -> dict[str, Any]:
-    if isinstance(result, dict):
-        data = result.get("data")
-        if isinstance(data, dict):
-            return data
-        return result
-    return {}
+    data = unwrap_data(result)
+    return data if isinstance(data, dict) else {}
 
 
 def normalize_group_summary(raw_group: dict[str, Any]) -> dict[str, Any]:

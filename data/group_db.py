@@ -225,17 +225,21 @@ class QQAdminDB:
                 return copy.deepcopy(snapshot[field])
             return copy.deepcopy(default)
 
-        data = self._cache[gid]
-
-        if field not in data:
+        if field not in self._cache[gid]:
             async with self._write_lock:
-                # double-check after acquiring lock
+                # 等锁期间群可能被 set/replace_group 换成新 dict，必须重新取缓存，
+                # 否则会把旧 dict 写回库，覆盖掉面板刚保存的新配置。
+                data = self._cache.get(gid)
+                if data is None or self._is_follow_default_data(data):
+                    snapshot = self.get_group_snapshot(gid)
+                    return copy.deepcopy(snapshot[field] if field in snapshot else default)
                 if field not in data:
                     data[field] = copy.deepcopy(default)
                     await self._save_to_db(gid, data)
                     self._snapshot_cache.pop(gid, None)
+                return copy.deepcopy(data[field])
 
-        return copy.deepcopy(data[field])
+        return copy.deepcopy(self._cache[gid][field])
 
     async def set(self, gid: str, field: str, value):
         """

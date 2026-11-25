@@ -56,12 +56,16 @@ def evaluate_perm(
 
     权限模块的测试 seam：不触网络、不读配置；`perm_block` 只负责取数，
     判定只走这里。装饰器与 LLM 两条路径早已在 `perm_block` 会合。
+
+    Bot 等级为 UNKNOWN 表示查询失败（不是确认无权限），不参与 Bot/目标
+    等级拦截：命令继续执行，由 OneBot 接口按 Bot 的真实权限兜底。
     """
     if user_level > required_level:
         return f"你没{required_level}权限"
-    if bot_level > bot_required:
-        return f"我没{bot_required}权限"
-    for target_level in target_levels:
-        if bot_level >= target_level:
-            return f"我动不了{target_level}"
+    if bot_level is not PermLevel.UNKNOWN:
+        if bot_level > bot_required:
+            return f"我没{bot_required}权限"
+        for target_level in target_levels:
+            if bot_level >= target_level:
+                return f"我动不了{target_level}"
     return None

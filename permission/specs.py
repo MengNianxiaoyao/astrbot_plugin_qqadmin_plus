@@ -47,10 +47,12 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "cancel_group_admin": CommandSpec("admin", PermLevel.OWNER, check_at=False),
     "set_essence_msg": CommandSpec("essence", llm_tool="llm_set_essence_msg"),
     "delete_essence_msg": CommandSpec("essence"),
-    "get_essence_msg_list": CommandSpec("get_essence_msg_list", llm_tool="llm_get_essence_msg_list", public=True),
+    "get_essence_msg_list": CommandSpec(
+        "get_essence_msg_list", PermLevel.MEMBER, llm_tool="llm_get_essence_msg_list", public=True
+    ),
     "set_group_portrait": CommandSpec("set_group_portrait", llm_tool="llm_set_group_portrait"),
     "set_group_name": CommandSpec("set_group_name", llm_tool="llm_set_group_name"),
-    "delete_msg": CommandSpec("delete_msg", PermLevel.MEMBER),
+    "delete_msg": CommandSpec("delete_msg", PermLevel.ADMIN),
     "send_group_notice": CommandSpec("send_group_notice", llm_tool="llm_send_group_notice"),
     "get_group_notice": CommandSpec("get_group_notice", PermLevel.MEMBER, llm_tool="llm_get_group_notice", public=True),
     # ---------- 投票 / 宵禁 ----------
@@ -74,7 +76,7 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "agree_add_group": CommandSpec("approve", allow_private=True, check_at=False),
     "refuse_add_group": CommandSpec("approve", allow_private=True, check_at=False),
     "get_group_member_list": CommandSpec("get_group_member_list", PermLevel.MEMBER, public=True),
-    "clear_group_member": CommandSpec("clear_group_member", PermLevel.MEMBER),
+    "clear_group_member": CommandSpec("clear_group_member", PermLevel.ADMIN),
     "upload_group_file": CommandSpec(
         "upload_group_file", PermLevel.MEMBER, llm_tool="llm_upload_group_file", public=True
     ),

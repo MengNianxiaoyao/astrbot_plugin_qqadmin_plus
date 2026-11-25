@@ -74,12 +74,25 @@ class PermissionManager:
                 lvl = PermLevel.MEMBER
             case _:
                 lvl = PermLevel.UNKNOWN
+        # 查不到角色（接口超时/空结果）不缓存，避免短时间内连续误判
+        if lvl == PermLevel.UNKNOWN:
+            return lvl
         self._perm_cache[cache_key] = (lvl, time.time())
         # 简单容量控制
         if len(self._perm_cache) > 500:
             oldest = min(self._perm_cache.items(), key=lambda kv: kv[1][1])[0]
             self._perm_cache.pop(oldest, None)
         return lvl
+
+    async def bot_level_for(self, event: AiocqhttpMessageEvent, required: PermLevel) -> PermLevel:
+        """取 Bot 自身等级；成员级要求直接按成员放行。
+
+        能收到群消息说明 Bot 至少在群里，而查群成员资料偶发超时会返回 UNKNOWN，
+        再把“我没成员权限”回给用户属于误报，所以成员级命令不再查一次接口。
+        """
+        if required == PermLevel.MEMBER:
+            return PermLevel.MEMBER
+        return await self.get_perm_level(event, event.get_self_id())
 
     async def perm_block(
         self,
@@ -105,7 +118,7 @@ class PermissionManager:
             # 配置中权限值为无效项时回退到管理员，防止权限放松导致越权
             required_level = PermLevel.ADMIN
 
-        bot_level = await self.get_perm_level(event, user_id=event.get_self_id())
+        bot_level = await self.bot_level_for(event, bot_perm)
 
         if target_ids is not None:
             # LLM 工具的目标由参数直接指定，没有 @/引用，需显式传入
@@ -115,8 +128,16 @@ class PermissionManager:
             explicit_targets = get_target_ids(event) if check_quote else get_ats(event)
         else:
             explicit_targets = []
-        target_levels = list(
-            await asyncio.gather(*(self.get_perm_level(event, user_id=target_id) for target_id in explicit_targets))
+        # 仅需成员的 Bot 命令不查询 Bot 资料（bot_level 是合成的成员等级），
+        # 无法据此判断“我动不了谁”；这类操作的最终权限由 OneBot 接口自身校验，
+        # 否则只读/消息类命令带目标时会被误判为动不了同级成员。
+        # Bot 等级查询失败（UNKNOWN）同理：既然无法比较，就交给接口兜底。
+        target_levels = (
+            []
+            if bot_perm == PermLevel.MEMBER or bot_level == PermLevel.UNKNOWN
+            else list(
+                await asyncio.gather(*(self.get_perm_level(event, user_id=target_id) for target_id in explicit_targets))
+            )
         )
 
         reason = evaluate_perm(user_level, bot_level, required_level, bot_perm, target_levels)
@@ -291,10 +312,13 @@ def perm_required(
                     await cast(Awaitable[Any], func(plugin_instance, event, *args, **kwargs))
                 return
 
-            # 固定成员可用的公开命令：不读用户权限配置，但仍校验 Bot 自身权限
+            # 固定成员可用的公开命令：不读用户权限配置；Bot 仅需成员的直接放行，
+            # 更高要求才查询 Bot 自身等级
             if public:
-                bot_level = await perm_manager.get_perm_level(event, event.get_self_id())
-                if bot_level > bot_perm:
+                bot_level = await perm_manager.bot_level_for(event, bot_perm)
+                # UNKNOWN 是“查不到”而非“确认不足”：公开命令直接尝试，
+                # 由 OneBot 接口兜底，避免接口偶发超时误报“我没…权限”。
+                if bot_level != PermLevel.UNKNOWN and bot_level > bot_perm:
                     yield event.plain_result(f"我没{bot_perm}权限")
                     event.stop_event()
                     return

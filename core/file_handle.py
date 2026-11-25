@@ -14,7 +14,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 
 from ..config import PluginConfig
-from ..utils import download_file, format_time
+from ..utils import download_file, format_time, unwrap_data
 
 
 class FileHandle:
@@ -24,11 +24,9 @@ class FileHandle:
     @staticmethod
     def _list_of(response, key: str) -> list:
         """容错取出响应中的文件夹/文件列表（兼容 {"data": {...}} 包裹）"""
-        if isinstance(response, dict):
-            data = response.get("data")
-            if isinstance(data, dict):
-                response = data
-            items = response.get(key, [])
+        data = unwrap_data(response)
+        if isinstance(data, dict):
+            items = data.get(key, [])
             if isinstance(items, list):
                 return [f for f in items if isinstance(f, dict)]
         return []

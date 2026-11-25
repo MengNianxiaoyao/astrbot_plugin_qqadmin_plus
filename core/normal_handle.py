@@ -13,7 +13,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ..config import PluginConfig
 from ..data import QQAdminDB, QQAdminGlobalList
-from ..utils import extract_image_url, format_time, get_nickname, get_target_ids
+from ..utils import extract_image_url, format_time, get_nickname, get_target_ids, unwrap_data
 
 
 class NormalHandle:
@@ -232,8 +232,7 @@ class NormalHandle:
         except Exception as e:
             logger.warning(f"获取群精华失败: {e}")
             return f"获取群精华失败：{e}"
-        if isinstance(essence_data, dict):
-            essence_data = essence_data.get("data") or []
+        essence_data = unwrap_data(essence_data)
         if not isinstance(essence_data, list) or not essence_data:
             return "没有群精华消息"
 

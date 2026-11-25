@@ -8,7 +8,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
-from ..utils import get_ats
+from ..utils import extract_messages, get_ats
 
 
 class RecallHandle:
@@ -48,12 +48,7 @@ class RecallHandle:
                 logger.warning(f"获取群聊消息记录失败: {e}")
                 return "获取群聊消息记录失败"
 
-            raw_messages = []
-            if isinstance(result, dict):
-                raw_messages = result.get("messages", []) or []
-            elif isinstance(result, list):
-                raw_messages = result
-            messages = [m for m in raw_messages if isinstance(m, dict)]
+            messages = extract_messages(result)
             delete_count = 0
             sem = asyncio.Semaphore(10)
 

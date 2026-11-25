@@ -154,8 +154,6 @@ class PluginConfig(ConfigNode):
         self.file_dir = self.data_dir / "file"
         self.file_dir.mkdir(parents=True, exist_ok=True)
 
-        self.spamming_count = 5
-        self.spamming_interval = 0.5
         self.refresh_runtime_settings()
 
     @staticmethod

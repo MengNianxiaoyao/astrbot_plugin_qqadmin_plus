@@ -11,7 +11,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 
 from ..config import PluginConfig
-from ..utils import download_file, extract_image_url, format_time
+from ..utils import download_file, extract_image_url, format_time, unwrap_data
 
 
 class NoticeHandle:
@@ -107,8 +107,7 @@ class NoticeHandle:
             logger.warning(f"获取群公告失败: {last_error}")
             return "获取群公告失败"
 
-        if isinstance(notices, dict):
-            notices = notices.get("data", []) or []
+        notices = unwrap_data(notices)
         if not isinstance(notices, list):
             return "当前群没有群公告"
 

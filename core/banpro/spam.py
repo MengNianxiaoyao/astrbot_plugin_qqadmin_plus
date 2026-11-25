@@ -14,6 +14,10 @@ from ...utils import get_nickname, is_group_admin
 
 # 状态清理检查的最小间隔（秒）：避免每条群消息都全量扫一遍
 _SWEEP_INTERVAL = 60
+# 刷屏判定阈值：固定为“连续 SPAM_COUNT 条消息且相邻间隔都小于 SPAM_INTERVAL 秒”。
+# 与禁言时长（spamming_ban_time，可按群配置）解耦，避免把正常连发误判成刷屏。
+SPAM_COUNT = 5
+SPAM_INTERVAL = 0.5
 
 
 class SpamDetector:
@@ -22,7 +26,7 @@ class SpamDetector:
     def __init__(self, config: PluginConfig, db: QQAdminDB):
         self.cfg = config
         self.db = db
-        # 不用 maxlen 固定，动态读取 cfg.spamming_count，便于热更新与手动裁剪
+        # 不用 maxlen 固定，按 SPAM_COUNT 手动裁剪，便于调整阈值后立即生效
         self.msg_timestamps: dict[str, dict[str, deque[float]]] = {}
         self.last_banned_time: dict[str, dict[str, float]] = {}
         self._last_sweep: dict[str, float] = {}
@@ -46,9 +50,9 @@ class SpamDetector:
         group_times = self.msg_timestamps.setdefault(group_id, {})
         timestamps = group_times.setdefault(sender_id, deque())
         timestamps.append(now)
-        count = int(self.cfg.spamming_count)
-        interval_thr = float(self.cfg.spamming_interval)
-        # 手动按 count 裁剪，支持配置热更新
+        count = SPAM_COUNT
+        interval_thr = SPAM_INTERVAL
+        # 手动按 count 裁剪，保持窗口只保留最近 SPAM_COUNT 条
         while len(timestamps) > count:
             timestamps.popleft()
         if len(timestamps) >= count:

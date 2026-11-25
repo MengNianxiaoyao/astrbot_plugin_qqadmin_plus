@@ -4,7 +4,7 @@ import time
 from astrbot.api import logger
 
 from ...data import QQAdminDB, QQAdminGlobalList
-from ...utils import get_group_member, resolve_allow_ids, resolve_block_ids
+from ...utils import get_group_member, resolve_allow_ids, resolve_block_ids, unwrap_data
 from .decision import (
     EFFECT_BLOCK,
     EFFECT_CLEAR_FAIL,
@@ -40,10 +40,9 @@ class JoinReviewer:
         def _counts(info: dict | None) -> tuple[int, int] | None:
             if not isinstance(info, dict):
                 return None
-            # 兼容 call_action 包裹的 {"data": {...}} 结构
-            data = info.get("data")
-            if isinstance(data, dict):
-                info = data
+            info = unwrap_data(info)
+            if not isinstance(info, dict):
+                return None
             try:
                 member_count = int(info.get("member_count") or 0)
                 max_count = int(info.get("max_member_count") or 0)
