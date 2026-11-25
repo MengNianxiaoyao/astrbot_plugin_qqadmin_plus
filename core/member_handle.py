@@ -61,7 +61,9 @@ class MemberHandle:
     @staticmethod
     def _format_member_line(member: dict) -> str:
         name = member.get("card") or member.get("nickname") or "（无昵称）"
-        return f"{format_time(safe_int(member.get('join_time')))}：【{member.get('level', 0)}】{member.get('user_id', '?')}-{name}"
+        join_time = safe_int(member.get("join_time"))
+        joined = format_time(join_time) if join_time > 0 else "未知"
+        return f"{joined}：【{member.get('level', 0)}】{member.get('user_id', '?')}-{name}"
 
     # ============================== 群友信息 ==============================
 

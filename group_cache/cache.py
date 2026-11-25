@@ -568,9 +568,18 @@ class QQGroupInfoCache:
             errors.insert(0, preferred_error)
             return result, client, errors
         if valid is None or valid(result):
+            # 优先端已命中：其余请求的协程尚未启动，关闭掉，避免 "never awaited" 警告
+            self._discard_unstarted(attempts[1:])
             return result, client, []
         # 优先端结果无效：其余竞速（优先端不再参与）
         return await self._race_all(attempts[1:], valid)
+
+    @staticmethod
+    def _discard_unstarted(attempts: Any) -> None:
+        for _index, _client, coro in attempts:
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
 
     async def _race_all(
         self,

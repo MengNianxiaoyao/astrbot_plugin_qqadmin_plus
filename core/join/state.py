@@ -12,6 +12,8 @@ PENDING_TTL = PENDING_DEFAULT_DAYS * 86400
 # 待审批登记持久化上限（天）：落盘恢复与兜底清理的宽口径，只防无限增长，不参与业务判定
 PENDING_MAX_DAYS = 30
 PENDING_MAX_TTL = PENDING_MAX_DAYS * 86400
+# 内存登记上限：超出后先清过期、再淘汰最旧记录，避免长期运行无限增长
+PENDING_LIMIT = 200
 
 
 def pending_ttl_secs(value: object) -> float:
@@ -138,9 +140,14 @@ class JoinState:
             "comment": (str(comment).strip()[:500] if comment else ""),
             "ts": time.time(),
         }
-        # 简单清理过期记录，防止内存无限增长
-        if len(self.pending) > 200:
+        # 先清过期，再按最旧优先淘汰，保证登记总数受控
+        if len(self.pending) > PENDING_LIMIT:
             self._drop_stale(time.time())
+            overflow = len(self.pending) - PENDING_LIMIT
+            if overflow > 0:
+                oldest = sorted(self.pending.items(), key=lambda item: item[1].get("ts", 0))[:overflow]
+                for key, _record in oldest:
+                    self.pending.pop(key, None)
         self._save_pending()
 
     def register_application(self, uid: str, gid: str, flag: str, name: str):

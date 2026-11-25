@@ -25,7 +25,12 @@ class LexiconStore:
 
     @staticmethod
     def _clean_words(words) -> list[str]:
-        return normalize_and_dedupe_strings(str(word) for word in words)
+        cleaned = normalize_and_dedupe_strings(str(word) for word in words)
+        single_chars = [word for word in cleaned if len(word) == 1]
+        if single_chars:
+            # 单字词匹配范围过宽，加载时直接剔除并只提示一次，避免每条消息重复告警
+            logger.warning(f"已忽略单字禁词以避免过度匹配: {'、'.join(single_chars)}")
+        return [word for word in cleaned if len(word) > 1]
 
     def _load_global_ban_words(self) -> list[str]:
         path = self.cfg.global_ban_lexicon_path
@@ -61,15 +66,12 @@ class LexiconStore:
         return self.set_global_ban_words(self.builtin_ban_words)
 
     @staticmethod
-    def find_hit(message: str, ban_words: list[str], gid: str) -> str | None:
-        """纯匹配：返回命中的第一条禁词；忽略空词与单字词（后者记 warning）。"""
+    def find_hit(message: str, ban_words: list[str]) -> str | None:
+        """纯匹配：返回命中的第一条禁词；空词与单字词直接忽略。"""
         msg = message.lower()
         for word in ban_words:
             w = str(word).strip()
-            if not w:
-                continue
-            if len(w) == 1:
-                logger.warning(f"跳过单字禁词以避免过度匹配: {w!r} (群{gid})")
+            if len(w) < 2:
                 continue
             if w.lower() in msg:
                 return w
@@ -99,7 +101,7 @@ class LexiconStore:
     async def check_ban_words(self, event: AiocqhttpMessageEvent, ban_words: list[str]) -> bool:
         """检测违禁词并撤回消息、禁言发送者；命中返回 True。"""
         gid = event.get_group_id()
-        if self.find_hit(event.get_message_str(), ban_words, gid) is None:
+        if self.find_hit(event.get_message_str(), ban_words) is None:
             return False
         # 撤回消息
         try:

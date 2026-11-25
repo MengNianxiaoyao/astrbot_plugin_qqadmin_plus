@@ -5,6 +5,8 @@
 """
 
 import re
+from collections.abc import Awaitable, Callable
+from functools import wraps
 
 from astrbot.api import logger
 from astrbot.api.message_components import File, Image, Reply, Video
@@ -14,6 +16,23 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ..config import PluginConfig
 from ..utils import download_file, extract_dicts, format_time
+
+
+def _friendly_errors(action: str):
+    """入口统一兜底：OneBot 文件接口失败时返回可读文案，不把异常抛给框架。"""
+
+    def decorator(func: Callable[..., Awaitable[str]]):
+        @wraps(func)
+        async def wrapper(*args, **kwargs) -> str:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"{action}失败: {e}")
+                return f"{action}失败：{e}"
+
+        return wrapper
+
+    return decorator
 
 
 class FileHandle:
@@ -187,14 +206,19 @@ class FileHandle:
 
         # 清理非法字符
         safe_name = re.sub(r"[\\/:*?\"<>|]", "", folder_name)[:30]
-        # NapCat 主字段为 name，folder_name 仅作兼容；go-cqhttp 无此扩展接口
-        await client.create_group_file_folder(
-            group_id=group_id,
-            name=safe_name,
-        )
+        # NapCat 主字段为 name，folder_name 仅作兼容；部分实现没有该扩展接口，
+        # 创建失败（含已存在）时仍尝试按名查找一次，找不到由调用方提示。
+        try:
+            await client.create_group_file_folder(
+                group_id=group_id,
+                name=safe_name,
+            )
+        except Exception as e:
+            logger.warning(f"创建群文件夹失败: {e}")
         # 再次获取，确保拿到 folder_id
         return await self._get_folder(event, safe_name)
 
+    @_friendly_errors("上传群文件")
     async def upload_group_file(self, event: AiocqhttpMessageEvent, path: str):
         """上传群文件"""
         folder_name, file_name = await self._parse_path(event, path)
@@ -237,6 +261,7 @@ class FileHandle:
                 logger.debug(f"清理上传临时文件失败: {e}")
         return f"群文件已上传：{path}"
 
+    @_friendly_errors("删除群文件")
     async def delete_group_file(self, event: AiocqhttpMessageEvent, path: str):
         """删除群文件夹或群文件"""
         folder_name, file_name = await self._parse_path(event, path)
@@ -273,6 +298,7 @@ class FileHandle:
                 return f"群文件夹【{folder_name}】不存在"
         return "未找到要删除的群文件或文件夹"
 
+    @_friendly_errors("查看群文件")
     async def view_group_file(self, event: AiocqhttpMessageEvent, path) -> str:
         """查看群文件/目录，path 可以是 文件夹名、文件名 或 文件夹名/文件名"""
         group_id = int(event.get_group_id())

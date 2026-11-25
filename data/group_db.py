@@ -149,11 +149,6 @@ class QQAdminDB:
 
     # ============================== 基础：确保配置存在 ==============================
 
-    async def ensure_group(self, gid: str):
-        """确保存在群配置，若没有则按 default_cfg 初始化"""
-        async with self._write_lock:
-            await self._ensure_group_locked(gid)
-
     async def _ensure_group_locked(self, gid: str):
         """持锁版本：供 set/add 在同一把锁内完成读改写。"""
         if gid not in self._cache or self._is_follow_default_data(self._cache.get(gid)):

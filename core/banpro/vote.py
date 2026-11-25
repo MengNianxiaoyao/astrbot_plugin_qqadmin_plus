@@ -3,6 +3,7 @@
 import asyncio
 import time
 
+from aiocqhttp import MessageSegment
 from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -76,13 +77,18 @@ class VoteSession:
                 except Exception:
                     logger.error(f"bot在群{group_id}权限不足，{action}失败")
                     await bot_client.send_group_msg(
-                        group_id=gid_int, message=f"投票通过，但{action}{nickname2}失败（权限不足）"
+                        group_id=gid_int,
+                        message=MessageSegment.text(f"投票通过，但{action}{nickname2}失败（权限不足）"),
                     )
                 else:
-                    await bot_client.send_group_msg(group_id=gid_int, message=f"投票时间到！已{action}{nickname2}")
+                    await bot_client.send_group_msg(
+                        group_id=gid_int,
+                        message=MessageSegment.text(f"投票时间到！已{action}{nickname2}"),
+                    )
             else:
                 await bot_client.send_group_msg(
-                    group_id=gid_int, message=f"投票时间到！{action}被否决，{nickname2}安全了"
+                    group_id=gid_int,
+                    message=MessageSegment.text(f"投票时间到！{action}被否决，{nickname2}安全了"),
                 )
         except Exception as e:
             logger.warning(f"群{group_id}投票结算通知发送失败: {e}")

@@ -167,7 +167,7 @@ def parse_threshold(value: str) -> tuple[int, list[str], bool] | None:
                 title = item.strip()
                 if not title:
                     continue
-                if len(title) > 20:
+                if len(title) > 20 or "[CQ:" in title:
                     return None
                 if title not in titles:
                     titles.append(title)
@@ -208,6 +208,9 @@ def parse_stock(value: str, copies: int) -> tuple[list[str], str | None]:
 def validate_prize(text: str) -> str | None:
     if not text or len(text) > MAX_PRIZE_LEN:
         return f"奖品名称需在 {MAX_PRIZE_LEN} 字以内，请重新输入"
+    if "[CQ:" in text:
+        # 公告按 CQ 字符串广播，奖品名里的 CQ 码会被解析成 @/图片指令
+        return "奖品名称不能包含 CQ 码，请重新输入"
     return None
 
 

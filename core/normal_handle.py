@@ -56,7 +56,7 @@ class NormalHandle:
                     user_id=int(tid),
                     duration=ban_time,
                 )
-                results.append(f"用户[{tid}]已被禁言{ban_time}秒")
+                results.append(f"用户[{tid}]已被解除禁言" if ban_time == 0 else f"用户[{tid}]已被禁言{ban_time}秒")
             except Exception as e:
                 logger.warning(f"禁言用户{tid}失败: {e}")
                 results.append(f"用户[{tid}]禁言失败")

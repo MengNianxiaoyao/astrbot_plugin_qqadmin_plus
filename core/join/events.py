@@ -1,5 +1,6 @@
 from aiocqhttp import CQHttp, MessageSegment
 from astrbot.api import logger
+from astrbot.api.message_components import Plain
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -198,23 +199,27 @@ class JoinEvents:
         join_welcome = await self.db.get(gid, "join_welcome")
         if join_welcome:
             nickname = await get_nickname(event, uid)
-            # 兼容 {nickname}/{qq} 双变量;用 replace 避免 format 缺键抛异常
-            welcome = str(join_welcome).replace("{nickname}", nickname).replace("{qq}", uid)
-            if welcome:
+            template = str(join_welcome)
+            # 纯文本兜底：plain_result 按文本段发送，不会被解析成 CQ 指令
+            welcome = template.replace("{nickname}", nickname).replace("{qq}", uid)
+            try:
+                chain = parse_cq_to_chain(template, allowed_roots=[self.cfg.data_dir, self.cfg.plugin_dir])
+            except Exception as e:
+                logger.warning(f"解析进群欢迎词失败: {e}, 回退为纯文本")
+                chain = []
+            # 变量只替换 Plain 文本，昵称/QQ 里携带的 CQ 码不会被当成指令执行
+            for seg in chain:
+                if isinstance(seg, Plain):
+                    seg.text = seg.text.replace("{nickname}", nickname).replace("{qq}", uid)
+            if chain:
                 try:
-                    chain = parse_cq_to_chain(welcome, allowed_roots=[self.cfg.data_dir, self.cfg.plugin_dir])
+                    # 优先用 chain_result (当前主干通用写法)
+                    await event.send(event.chain_result(chain))
                 except Exception as e:
-                    logger.warning(f"解析进群欢迎词失败: {e}, 回退为纯文本")
-                    chain = []
-                if chain:
-                    try:
-                        # 优先用 chain_result (当前主干通用写法)
-                        await event.send(event.chain_result(chain))
-                    except Exception as e:
-                        logger.warning(f"发送欢迎词富文本失败: {e}, 回退为纯文本")
-                        await event.send(event.plain_result(welcome))
-                else:
+                    logger.warning(f"发送欢迎词富文本失败: {e}, 回退为纯文本")
                     await event.send(event.plain_result(welcome))
+            else:
+                await event.send(event.plain_result(welcome))
         # 进群禁言
         join_ban_time = await self.db.get(gid, "join_ban_time", 0)
         if join_ban_time > 0:

@@ -1,5 +1,42 @@
 # 更新日志
 
+## 3.7.0
+
+优化:
+
+- 对齐 AstrBot 4.29 接口：引用消息改用 `quoted_message_parser` 解析，名单清洗改用 `normalize_and_dedupe_strings`，事件读取改用 `get_message_str()` / `get_platform_name()`，临时文件名用 `generate_timestamp_id()`；插件最低版本提升到 `>=4.29.0`。
+- 新增 `app.py` 组合根，统一创建配置、存储、群缓存、权限、业务与 Web 面板；`main.py` 只保留 Handler 注册与转发，权限改为由插件实例注入，不再使用模块级单例。
+- 共享能力收敛到 `utils.py`：`TTLCache`（权限等级、进群多群探测缓存）、`BackgroundTasks`（app 与抽奖引擎的后台任务）、`extract_list` / `extract_dicts` / `extract_messages`（OneBot 响应取数）；原先各自手写的缓存淘汰、任务集合与响应解包改为共用一处。
+- 同名文件按职责区分：`group_cache/utils.py` → `group_cache/normalize.py`，`core/curfew/store.py` → `curfew_store.py`、`core/curfew/manager.py` → `curfew_manager.py`，`core/lottery/store.py` → `lottery_store.py`。
+- 宵禁开启/关闭合并为 `_set_whole_ban`，状态翻转、失败回滚与通知只保留一份实现；`HH:MM` 解析统一走 `parse_clock`。
+- 面板参数解析复用 `parse_bool`；群详情接口与保存接口共用返回结构；`page_service` 直接复用 `PluginConfig.schema`，不再重复读取 `_conf_schema.json`。
+- 抽奖去掉无效的 `CancelledError` 包装，连接重试窗口改用 `DRAW_RETRY_DELAY` 常量；时间展示统一走 `format_time`。
+- 群文件上传/删除/查看统一兜底：OneBot 文件接口异常时返回可读文案，不再把异常抛给框架；移除未使用的 `QQAdminDB.ensure_group`。
+
+修复:
+
+- 进群申请通知改用 OneBot 接口发送以获取 `message_id`：`event.send()` 固定返回 `None`，原先待审登记从未生效，管理员引用通知回复「批准/驳回」会匹配不到记录。
+- 发送进群通知与管理员私信时显式使用 `MessageSegment.text`，避免昵称或验证消息里的 CQ 码被当作指令解析。
+- 进群欢迎词的 `{nickname}`/`{qq}` 改为只替换纯文本段，昵称里携带的 CQ 码不再被解析成 @/图片指令；投票结算通知同样改用文本段发送。
+- 群成员列表统一经 `extract_list` 解包，兼容 `{"data": [...]}` 形式的响应。
+- 进群人数查询去掉永远为真的 `hasattr` 分支，统一用 `safe_int` 归一化人数。
+- `解禁` 回执改为「已解除禁言」，不再显示「已被禁言0秒」。
+- 抽奖的奖品名与参与头衔拒绝 CQ 码，避免开奖公告按 CQ 字符串广播时被解析成 @/图片指令。
+- 待审批登记上限真正生效：超过 200 条时先清过期、再淘汰最旧记录，不再只按 30 天口径清理。
+- 单字禁词在加载时统一剔除并只提示一次，不再对每条群消息重复告警。
+- 群文件夹创建在实现不支持时降级为按名查找，不再抛异常中断上传；群友信息缺少入群时间时显示「未知」。
+- 群列表缓存竞速命中后关闭未启动的请求协程，避免 `coroutine was never awaited` 警告。
+
+词表:
+
+- 内置禁词移除 79 个日常通用词（如 `集合`、`激情`、`高潮`、`写真`、`静坐`、`作弊`、`法院`、`清真`、`拉萨` 等），避免正常聊天误命中。
+- 清除 148 条重复条目，内置词表从 2009 条降至 1779 条，`lastUpdateDate` 更新为 `2026/11/25`。
+
+说明:
+
+- 环境要求同步为 `AstrBot >= 4.29.0`、`Python 3.12+`；插件元数据声明 `views` 入口。
+- 内置词表保留政治口号/人名、色情、毒品、枪支与诈骗类词条。
+
 ## 3.6.0
 
 修复:
