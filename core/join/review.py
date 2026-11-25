@@ -4,7 +4,14 @@ import time
 from astrbot.api import logger
 
 from ...data import QQAdminDB, QQAdminGlobalList
-from ...utils import get_group_member, resolve_allow_ids, resolve_block_ids, unwrap_data
+from ...utils import (
+    TTLCache,
+    get_group_member,
+    resolve_allow_ids,
+    resolve_block_ids,
+    safe_int,
+    unwrap_data,
+)
 from .decision import (
     EFFECT_BLOCK,
     EFFECT_CLEAR_FAIL,
@@ -14,6 +21,8 @@ from .decision import (
     decide,
 )
 from .state import PENDING_DEFAULT_DAYS, JoinState, pending_ttl_secs
+
+_MISSING = object()
 
 
 class JoinReviewer:
@@ -31,23 +40,18 @@ class JoinReviewer:
         self._group_cache = group_cache
         self.state = state
         # 多群探测结果短缓存：同一申请人的重复事件不重复扫全群
-        self._other_group_cache: dict[tuple[str, str], tuple[str | None, float]] = {}
+        self._other_group_cache = TTLCache(ttl=60, capacity=500)
 
     async def _group_counts(self, gid: str, client=None) -> tuple[int, int] | None:
         """群（现有人数, 上限）。必须实时直查 OneBot 接口，不用群缓存（待审核名额差一两人都不能错）。
         拿不到有效人数时返回 None（调用方按放行处理）。"""
 
         def _counts(info: dict | None) -> tuple[int, int] | None:
-            if not isinstance(info, dict):
-                return None
             info = unwrap_data(info)
             if not isinstance(info, dict):
                 return None
-            try:
-                member_count = int(info.get("member_count") or 0)
-                max_count = int(info.get("max_member_count") or 0)
-            except (TypeError, ValueError):
-                return None
+            member_count = safe_int(info.get("member_count"), 0)
+            max_count = safe_int(info.get("max_member_count"), 0)
             if member_count <= 0 or max_count <= 0:
                 return None
             return member_count, max_count
@@ -56,16 +60,12 @@ class JoinReviewer:
         if client is None:
             return None
         try:
-            info = None
-            if hasattr(client, "get_group_info"):
-                try:
-                    info = await client.get_group_info(group_id=int(gid), no_cache=True)
-                except TypeError:
-                    info = await client.get_group_info(group_id=int(gid))
-            elif hasattr(client, "call_action"):
-                info = await client.call_action("get_group_info", group_id=int(gid), no_cache=True)
-            counts = _counts(info if isinstance(info, dict) else None)
-            if counts:
+            try:
+                info = await client.get_group_info(group_id=int(gid), no_cache=True)
+            except TypeError:
+                # 部分 OneBot 实现不认 no_cache 参数
+                info = await client.get_group_info(group_id=int(gid))
+            if counts := _counts(info):
                 return counts
         except Exception as e:
             logger.debug(f"获取群 {gid} 人数失败，跳过满群检查: {e}")
@@ -100,9 +100,9 @@ class JoinReviewer:
         if client is None or not self._group_cache:
             return None
         cache_key = (gid, uid)
-        cached = self._other_group_cache.get(cache_key)
-        if cached and time.time() - cached[1] < 60:
-            return cached[0]
+        cached = self._other_group_cache.get(cache_key, _MISSING)
+        if cached is not _MISSING:
+            return cached
         try:
             groups = await self._group_cache.list_groups()
         except Exception as e:
@@ -114,7 +114,7 @@ class JoinReviewer:
             if isinstance(g, dict) and str(g.get("group_id", "")) and str(g.get("group_id", "")) != gid
         ]
         if not others:
-            self._other_group_cache[cache_key] = (None, time.time())
+            self._other_group_cache.set(cache_key, None)
             return None
 
         semaphore = asyncio.Semaphore(4)
@@ -141,10 +141,7 @@ class JoinReviewer:
                 if not task.done():
                     task.cancel()
 
-        self._other_group_cache[cache_key] = (result, time.time())
-        if len(self._other_group_cache) > 500:
-            oldest = min(self._other_group_cache.items(), key=lambda kv: kv[1][1])[0]
-            self._other_group_cache.pop(oldest, None)
+        self._other_group_cache.set(cache_key, result)
         return result
 
     async def add_to_block(self, gid: str, uid: str):

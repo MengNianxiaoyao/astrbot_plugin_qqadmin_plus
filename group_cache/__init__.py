@@ -5,11 +5,19 @@
 2) 实时拿不到的已知群用 DB 兜底（source=cached）。
 3) 缺详情（无名/人数全 0）限流补 get_group_info。
 4) Bot 身份（bot_role）单独懒补，TTL 600s。
-纯数据变换在 .utils（可单测）；失效判定连续计票防抖动误删。
+纯数据变换在 .normalize（可单测）；失效判定连续计票防抖动误删。
 
-子模块：cache.QQGroupInfoCache / utils（归一化/排序/错误格式化）。
+子模块：cache.QQGroupInfoCache / normalize（归一化/排序/错误格式化）。
 """
 
-from .cache import QQGroupInfoCache, iter_aiocqhttp_clients
+from .cache import (
+    QQGroupInfoCache,
+    iter_aiocqhttp_adapters,
+    iter_aiocqhttp_clients,
+)
 
-__all__ = ["QQGroupInfoCache", "iter_aiocqhttp_clients"]
+__all__ = [
+    "QQGroupInfoCache",
+    "iter_aiocqhttp_adapters",
+    "iter_aiocqhttp_clients",
+]

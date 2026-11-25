@@ -16,7 +16,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from astrbot.core.utils.session_waiter import SessionController, session_waiter
 
 from ..data import QQAdminDB, QQAdminGlobalList
-from ..utils import chunk_lines, format_time, resolve_allow_ids, safe_int, send_lines
+from ..utils import chunk_lines, extract_list, format_time, resolve_allow_ids, safe_int, send_lines
 
 # 确认清理阶段并发踢人的最大并发数
 KICK_CONCURRENCY = 8
@@ -49,7 +49,7 @@ class MemberHandle:
     async def _fetch_members(self, event: AiocqhttpMessageEvent, group_id: str) -> tuple[list | None, str]:
         """拉取群成员列表，失败时返回错误文案由调用方决定发送还是回执"""
         try:
-            return await event.bot.get_group_member_list(group_id=int(group_id)), ""
+            return extract_list(await event.bot.get_group_member_list(group_id=int(group_id))), ""
         except Exception as e:
             logger.error(f"获取群成员列表失败：{e}")
             return None, f"获取群成员信息失败：{e}"
@@ -162,11 +162,11 @@ class MemberHandle:
         async def waiter(controller: SessionController, wait_event: AiocqhttpMessageEvent):
             if group_id != wait_event.get_group_id() or sender_id != wait_event.get_sender_id():
                 return
-            if wait_event.message_str == "取消清理":
+            if wait_event.get_message_str() == "取消清理":
                 await wait_event.send(wait_event.plain_result("清理群友任务已取消"))
                 controller.stop()
                 return
-            if wait_event.message_str != "确认清理":
+            if wait_event.get_message_str() != "确认清理":
                 return
 
             await wait_event.send(wait_event.plain_result(f"正在执行清理（共 {len(candidates)} 位），请稍候……"))

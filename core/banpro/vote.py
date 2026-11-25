@@ -11,16 +11,17 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from ...config import PluginConfig
 from ...data import QQAdminDB
 from ...permission.levels import PermLevel
-from ...permission.manager import perm_manager
+from ...permission.manager import PermissionManager
 from ...utils import get_nickname, get_target_ids
 
 
 class VoteSession:
     """投票模块：一群一票的状态机、阈值提前通过与 TTL 多数决结算。"""
 
-    def __init__(self, config: PluginConfig, db: QQAdminDB):
+    def __init__(self, config: PluginConfig, db: QQAdminDB, permissions: PermissionManager):
         self.cfg = config
         self.db = db
+        self.permissions = permissions
         # 记录投票 {group_id: {"target": target_id, "starter": starter_id, "votes": {user_id: bool}, "expire": timestamp, "threshold": threshold,}}
         self.vote_cache: dict[str, dict] = {}
         self._settle_tasks: set[asyncio.Task] = set()
@@ -156,7 +157,7 @@ class VoteSession:
         sender_id = str(event.get_sender_id())
         if (
             sender_id != str(record.get("starter"))
-            and await perm_manager.get_perm_level(event, sender_id) > PermLevel.ADMIN
+            and await self.permissions.get_perm_level(event, sender_id) > PermLevel.ADMIN
         ):
             return "仅投票发起人或管理员可取消投票"
         self.vote_cache.pop(group_id, None)

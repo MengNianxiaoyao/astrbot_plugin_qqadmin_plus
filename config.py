@@ -18,11 +18,9 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
-from astrbot.api import logger
-from astrbot.core.config.astrbot_config import AstrBotConfig
-from astrbot.core.star.context import Context
-from astrbot.core.star.star_tools import StarTools
-from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
+from astrbot.api import AstrBotConfig, logger
+from astrbot.api.star import Context, StarTools
+from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
 from .utils import load_json, save_json_atomic
 
@@ -132,15 +130,16 @@ class PluginConfig(ConfigNode):
     perms: dict
 
     _db_version = 3
-    _plugin_name: str = "astrbot_plugin_qqadmin_plus"
 
     def __init__(self, cfg: AstrBotConfig, context: Context):
         super().__init__(cfg)
         self.context = context
         self.admins_id = self._clean_ids(context.get_config().get("admins_id", []))
 
-        self.data_dir = StarTools.get_data_dir(self._plugin_name)
-        self.plugin_dir = Path(get_astrbot_plugin_path()) / self._plugin_name
+        # 以本文件所在目录为插件根，兼容源码部署与桌面打包运行
+        self.plugin_dir = Path(__file__).resolve().parent
+        self.plugin_name = self.plugin_dir.name
+        self.data_dir = StarTools.get_data_dir(self.plugin_name)
         self.schema = self._load_schema()
 
         self.db_path = self.data_dir / f"qqadmin_data_v{self._db_version}.db"
@@ -159,7 +158,7 @@ class PluginConfig(ConfigNode):
     @staticmethod
     def _clean_ids(ids: list) -> list[str]:
         """过滤并规范化数字 ID"""
-        return [str(i) for i in ids if str(i).isdigit()]
+        return normalize_and_dedupe_strings(str(i) for i in ids if str(i).isdigit())
 
     def get_ban_time(self, seconds=None) -> int:
         """获取禁言时间"""

@@ -4,6 +4,7 @@ from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
+from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
 from ...config import PluginConfig
 from ...data import QQAdminDB
@@ -24,7 +25,7 @@ class LexiconStore:
 
     @staticmethod
     def _clean_words(words) -> list[str]:
-        return list(dict.fromkeys(str(word).strip() for word in words if str(word).strip()))
+        return normalize_and_dedupe_strings(str(word) for word in words)
 
     def _load_global_ban_words(self) -> list[str]:
         path = self.cfg.global_ban_lexicon_path
@@ -98,7 +99,7 @@ class LexiconStore:
     async def check_ban_words(self, event: AiocqhttpMessageEvent, ban_words: list[str]) -> bool:
         """检测违禁词并撤回消息、禁言发送者；命中返回 True。"""
         gid = event.get_group_id()
-        if self.find_hit(event.message_str, ban_words, gid) is None:
+        if self.find_hit(event.get_message_str(), ban_words, gid) is None:
             return False
         # 撤回消息
         try:

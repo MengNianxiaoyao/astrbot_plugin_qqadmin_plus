@@ -10,8 +10,9 @@
 import copy
 import re
 import time
-from pathlib import Path
 from typing import Any
+
+from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
 from .config import PluginConfig
 from .core.banpro import BanproHandle
@@ -19,8 +20,8 @@ from .core.join.approve import JoinApprover
 from .core.join.state import PENDING_DEFAULT_DAYS, JoinState, pending_ttl_secs
 from .data import QQAdminDB, QQAdminGlobalList
 from .group_cache import QQGroupInfoCache, iter_aiocqhttp_clients
-from .permission import perm_manager
-from .utils import load_json, parse_bool
+from .permission import PermissionManager
+from .utils import parse_bool
 
 DEFAULT_GROUP_ID = "__default__"
 FOLLOW_DEFAULT_KEY = "follow_default"
@@ -34,6 +35,7 @@ class QQAdminPageService:
         group_cache: QQGroupInfoCache,
         global_list: QQAdminGlobalList,
         banpro: BanproHandle,
+        permissions: PermissionManager,
         join_state: JoinState | None = None,
         context=None,
     ):
@@ -42,9 +44,10 @@ class QQAdminPageService:
         self.group_cache = group_cache
         self.global_list = global_list
         self.banpro = banpro
+        self.permissions = permissions
         self.join_state = join_state
         self.context = context
-        self.schema = self._load_schema(cfg.plugin_dir / "_conf_schema.json")
+        self.schema = cfg.schema
 
     @property
     def group_schema(self) -> dict[str, Any]:
@@ -165,16 +168,19 @@ class QQAdminPageService:
             return self.get_default_group_config()
 
         group_id = self._normalize_group_id(group_id)
-        follow_default = self.db.is_group_follow_default(group_id)
         group_info = await self.group_cache.get_group(group_id, force=force)
         if self.group_cache.is_stale_group(group_info):
             await self.group_cache.delete_group_data(group_id)
             raise ValueError(f"group {group_id} no longer exists and has been deleted")
+        return self._group_payload(group_id, group_info)
+
+    def _group_payload(self, group_id: str, group_info: dict[str, Any]) -> dict[str, Any]:
+        """群详情响应骨架：群信息 + 跟随默认标记 + 当前有效配置。"""
         return {
             "group_id": group_id,
             "group_info": group_info,
             "config": {
-                FOLLOW_DEFAULT_KEY: follow_default,
+                FOLLOW_DEFAULT_KEY: self.db.is_group_follow_default(group_id),
                 **self.db.get_group_snapshot(group_id),
             },
             "is_default_group": False,
@@ -207,16 +213,7 @@ class QQAdminPageService:
             await self.group_cache.delete_group_data(group_id)
             raise ValueError(f"group {group_id} no longer exists and has been deleted")
 
-        follow_default = self.db.is_group_follow_default(group_id)
-        return {
-            "group_id": group_id,
-            "group_info": group_info,
-            "config": {
-                FOLLOW_DEFAULT_KEY: follow_default,
-                **self.db.get_group_snapshot(group_id),
-            },
-            "is_default_group": False,
-        }
+        return self._group_payload(group_id, group_info)
 
     async def reset_group_config(self, group_id: str) -> dict[str, Any]:
         if str(group_id).strip() == DEFAULT_GROUP_ID:
@@ -260,7 +257,7 @@ class QQAdminPageService:
     async def update_global_list(self, list_type: str, items: list[str]) -> list[str]:
         if not isinstance(items, list):
             raise ValueError("items must be a list")
-        cleaned = [str(item).strip() for item in items if str(item).strip().isdigit()]
+        cleaned = normalize_and_dedupe_strings(str(item) for item in items if str(item).strip().isdigit())
         return await self.global_list.set(list_type, cleaned)
 
     async def get_global_ban_words(self) -> dict[str, list[str]]:
@@ -412,11 +409,6 @@ class QQAdminPageService:
         raise ValueError(f"审批失败：{last_err}" if last_err else "审批失败")
 
     @staticmethod
-    def _load_schema(schema_path: Path) -> dict[str, Any]:
-        schema = load_json(schema_path, {})
-        return schema if isinstance(schema, dict) else {}
-
-    @staticmethod
     def _normalize_group_id(group_id: str | int | None) -> str:
         gid = str(group_id or "").strip()
         if not gid or not gid.isdigit():
@@ -437,7 +429,7 @@ class QQAdminPageService:
         if "perms" in updated:
             self._merge_dict(self.cfg.perms, updated["perms"])
 
-        perm_manager.refresh(self.cfg, self.db)
+        self.permissions.refresh(self.cfg, self.db)
 
     def _get_group_overlay_schema(self) -> dict[str, Any]:
         keys = [
@@ -507,7 +499,7 @@ class QQAdminPageService:
                 items = value
             else:
                 raise ValueError(f"invalid list value: {value}")
-            result = [str(item).strip() for item in items if str(item).strip()]
+            result = normalize_and_dedupe_strings(str(item) for item in items if str(item).strip())
             # 带固定选项的列表（复选框组）只保留合法选项，防止脏数据
             options = schema.get("options")
             if options:

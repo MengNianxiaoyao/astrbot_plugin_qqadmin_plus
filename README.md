@@ -6,8 +6,8 @@
 _✨ QQ群管插件 ✨_
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.26.0-orange.svg)](https://github.com/Soulter/AstrBot)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
+[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.29.0-orange.svg)](https://github.com/Soulter/AstrBot)
 [![Original](https://img.shields.io/badge/Original-Zhalslar-blue.svg)](https://github.com/Zhalslar/astrbot_plugin_qqadmin)
 
 </div>
@@ -21,9 +21,30 @@ _✨ QQ群管插件 ✨_
 
 ## 📦 安装与环境
 
-- 要求：`AstrBot >= 4.26.0`，`Python 3.10+`，已接入 `aiocqhttp` 平台的 QQ 机器人。
+- 要求：`AstrBot >= 4.29.0`，`Python 3.12+`，已接入 `aiocqhttp` 平台的 QQ 机器人。
 - 安装：在 AstrBot 插件市场搜索 `astrbot_plugin_qqadmin_plus`，点击安装即可。
 - 数据目录：插件数据存放在 AstrBot 数据目录下的 `astrbot_plugin_qqadmin_plus/`（SQLite 群配置、全局黑白名单 JSON、全局禁词 JSON、宵禁 JSON、抽奖 JSON、群文件缓存等）。
+
+## 🧱 项目结构
+
+```
+main.py            AstrBot 接口层：命令 / LLM 工具 / 事件监听注册与薄转发
+app.py             应用装配根：配置、存储、业务能力、权限、Web 与生命周期
+core/              业务能力：normal / recall / notice / member / file 等 Handle
+  banpro/          违禁词、刷屏、投票
+  join/            进群审核、欢迎、退群
+  curfew/          宵禁调度
+  lottery/         抽奖（模型、解析、存储、引擎、问答、渲染）
+data/              SQLite 按群配置 + 全局名单 JSON
+group_cache/       多 aiocqhttp 连接发现与群信息缓存
+permission/        等级判定、权限元数据与命令/LLM 装饰器
+web.py             面板 HTTP 路由
+page_service.py    面板校验与落库
+utils.py           JSON、文本、下载、QQ 事件与 OneBot 响应工具
+pages/             前端面板静态资源
+```
+
+> AstrBot 在导入插件时按 Handler 的 `__module__` 归属插件，因此所有 `@filter.*` 方法必须留在入口 `main.py`；子包只放业务实现，避免把命令注册搬进 `core/` 后 Handler 不执行。
 
 ## ⌨️ 使用说明
 
@@ -104,7 +125,7 @@ _✨ QQ群管插件 ✨_
 
 ### 前端面板说明
 
-在 AstrBot 管理后台插件页点击本插件 Logo 进入详情页，在插件行为/页面入口中打开“群管面板”，即可进入群管面板（插件可视化视图 `pages/settings`，前端经 bridge 调用后端 API，鉴权由 Dashboard 统一处理；`pages/` 目录可兼容 AstrBot 4.26–4.29）。
+在 AstrBot 管理后台插件页点击本插件 Logo 进入详情页，在插件行为/页面入口中打开“群管面板”，即可进入群管面板（插件可视化视图 `pages/settings`，前端经 bridge 调用后端 API，鉴权由 Dashboard 统一处理；`pages/` 目录可兼容 AstrBot 4.29 及以上）。
 
 #### 群配置
 

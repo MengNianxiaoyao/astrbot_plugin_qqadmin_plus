@@ -2,8 +2,9 @@ from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
+from astrbot.core.utils.quoted_message_parser import extract_quoted_message_text
 
-from ...utils import get_reply_message_id, get_reply_message_str
+from ...utils import get_reply_message_id
 from .state import JoinState
 
 
@@ -35,7 +36,7 @@ class JoinApprover:
 
     async def set_approve(self, event: AiocqhttpMessageEvent, extra: str = "", approve: bool = True) -> str | None:
         """处理进群申请：优先按引用消息ID精确匹配，失败则按文本内容定位兜底。"""
-        text = get_reply_message_str(event)
+        text = await extract_quoted_message_text(event)
         reply_id = get_reply_message_id(event)
         if not text and not reply_id:
             return "未引用任何【进群申请】"

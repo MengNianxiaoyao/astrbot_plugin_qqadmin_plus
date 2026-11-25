@@ -6,8 +6,8 @@ from aiocqhttp import CQHttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from astrbot.api import logger
 
+from .curfew_store import CurfewStore
 from .group import GroupCurfew
-from .store import CurfewStore
 
 
 class BotCurfewManager:

@@ -10,11 +10,21 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from astrbot.api import logger
 
+from ...utils import parse_clock
+
+
+def _hhmm(value: str) -> tuple[int, int]:
+    """解析 "HH:MM"；调用方保证已校验，非法值直接抛 ValueError。"""
+    parsed = parse_clock(value)
+    if parsed is None:
+        raise ValueError(f"非法时间: {value}")
+    return parsed
+
 
 def in_curfew_window(now: datetime, start_time: str, end_time: str) -> bool:
     """当前时刻是否落在宵禁时间段内（纯函数，支持跨天，如 22:00~06:00）。"""
-    hour_s, minute_s = map(int, start_time.split(":"))
-    hour_e, minute_e = map(int, end_time.split(":"))
+    hour_s, minute_s = _hhmm(start_time)
+    hour_e, minute_e = _hhmm(end_time)
     start_dt = now.replace(hour=hour_s, minute=minute_s, second=0, microsecond=0)
     end_dt = now.replace(hour=hour_e, minute=minute_e, second=0, microsecond=0)
     if start_dt > end_dt:  # 跨天
@@ -55,62 +65,42 @@ class GroupCurfew:
         except Exception as e:
             logger.warning(f"群 {self.group_id} 宵禁状态保存失败: {e}")
 
+    async def _set_whole_ban(self, enable: bool, notice: str | None):
+        """翻转全员禁言：成功后发通知，失败回滚状态并保留任务以便下次重试。"""
+        async with self._lock:
+            if self.whole_ban_status == enable:
+                return
+            self.whole_ban_status = enable
+        try:
+            await self.bot.set_group_whole_ban(group_id=int(self.group_id), enable=enable)
+        except Exception as e:
+            action = "开启" if enable else "解除"
+            logger.error(f"群 {self.group_id} 宵禁{action}失败: {e}", exc_info=True)
+            async with self._lock:
+                self.whole_ban_status = not enable
+            return
+
+        # 通知失败不应回滚已经生效的禁言状态
+        if notice:
+            try:
+                await self.bot.send_group_msg(group_id=int(self.group_id), message=notice)
+            except Exception as e:
+                logger.warning(f"群 {self.group_id} 宵禁通知发送失败: {e}")
+        logger.info(f"群 {self.group_id} 已{'开启' if enable else '解除'}全体禁言")
+        await self._notify_status_change()
+
     async def _enable_curfew(self):
         """开启宵禁"""
-        async with self._lock:
-            if self.whole_ban_status:
-                return
-            self.whole_ban_status = True
-        try:
-            await self.bot.set_group_whole_ban(group_id=int(self.group_id), enable=True)
-        except Exception as e:
-            logger.error(f"群 {self.group_id} 宵禁开启失败: {e}", exc_info=True)
-            async with self._lock:
-                self.whole_ban_status = False
-            # 临时异常不自动移除，保留任务以便下次重试
-            return
-
-        # 通知失败不应回滚已经生效的全员禁言
-        try:
-            await self.bot.send_group_msg(
-                group_id=int(self.group_id),
-                message=f"【{self._start_time_str}】本群宵禁开始！",
-            )
-        except Exception as e:
-            logger.warning(f"群 {self.group_id} 宵禁开始通知发送失败: {e}")
-        logger.info(f"群 {self.group_id} 已开启全体禁言")
-        await self._notify_status_change()
+        await self._set_whole_ban(True, f"【{self._start_time_str}】本群宵禁开始！")
 
     async def _disable_curfew(self, notify: bool = True):
-        """关闭宵禁"""
-        async with self._lock:
-            if not self.whole_ban_status:
-                return
-            self.whole_ban_status = False
-        try:
-            await self.bot.set_group_whole_ban(group_id=int(self.group_id), enable=False)
-        except Exception as e:
-            logger.error(f"群 {self.group_id} 宵禁解除失败: {e}", exc_info=True)
-            async with self._lock:
-                self.whole_ban_status = True
-            return
-
-        # 通知失败不应把群留在已禁言状态；手动关闭时不发定时结束通知
-        if notify:
-            try:
-                await self.bot.send_group_msg(
-                    group_id=int(self.group_id),
-                    message=f"【{self._end_time_str}】本群宵禁结束！",
-                )
-            except Exception as e:
-                logger.warning(f"群 {self.group_id} 宵禁结束通知发送失败: {e}")
-        logger.info(f"群 {self.group_id} 已解除全体禁言")
-        await self._notify_status_change()
+        """关闭宵禁；手动关闭时不发定时结束通知。"""
+        await self._set_whole_ban(False, f"【{self._end_time_str}】本群宵禁结束！" if notify else None)
 
     async def start_curfew_task(self):
         """注册 APScheduler 定时任务"""
-        hour_s, minute_s = map(int, self._start_time_str.split(":"))
-        hour_e, minute_e = map(int, self._end_time_str.split(":"))
+        hour_s, minute_s = _hhmm(self._start_time_str)
+        hour_e, minute_e = _hhmm(self._end_time_str)
 
         self.start_job = self.scheduler.add_job(
             self._enable_curfew,

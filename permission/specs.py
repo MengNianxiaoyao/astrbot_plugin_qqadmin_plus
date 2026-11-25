@@ -14,7 +14,7 @@ from functools import wraps
 from typing import Any
 
 from .levels import PermLevel
-from .manager import perm_manager, perm_required
+from .manager import perm_required
 
 
 @dataclass(frozen=True)
@@ -114,7 +114,7 @@ def llm_guarded_for(
         @llm_guarded_for("llm_set_group_ban")
         async def llm_set_group_ban(...):
             ...
-            return await self.normal.set_group_ban(...)
+            return await self.app.normal.set_group_ban(...)
     """
     spec = _BY_LLM_TOOL[llm_name]
 
@@ -125,7 +125,11 @@ def llm_guarded_for(
             # 否则管理员可借 LLM 对群主/其他管理员执行踢人、禁言等操作。
             target_id = kwargs.get("user_id") or kwargs.get("target_id")
             target_ids = [str(target_id)] if target_id else None
-            if error := await perm_manager.llm_perm_block(
+            service = getattr(plugin_instance, "permissions", None)
+            if service is None:
+                yield "内部错误：权限系统未正确加载"
+                return
+            if error := await service.llm_perm_block(
                 event,
                 perm_key=spec.perm_key,
                 bot_perm=spec.bot_perm,

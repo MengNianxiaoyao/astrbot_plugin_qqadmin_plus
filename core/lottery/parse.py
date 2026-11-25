@@ -4,7 +4,7 @@ import re
 import zoneinfo
 from datetime import datetime, timedelta
 
-from ...utils import parse_clock
+from ...utils import format_time, parse_clock
 from .models import (
     MAX_COPIES,
     MAX_DURATION,
@@ -59,7 +59,7 @@ TIME_ERROR_PROMPT = f"无法识别时间。\n{DEADLINE_PROMPT}"
 
 def clock_label(timestamp: float, tz: zoneinfo.ZoneInfo, suffix: str) -> str:
     """把时间戳格式化为 `MM-DD HH:MM 后缀`，供问答提示与开奖公告共用。"""
-    return f"{datetime.fromtimestamp(timestamp, tz).strftime('%m-%d %H:%M')} {suffix}"
+    return f"{format_time(timestamp, '%m-%d %H:%M', tz)} {suffix}"
 
 
 def _parse_month_day(target: str, tz: zoneinfo.ZoneInfo, suffix: str) -> tuple[float | None, None, str] | None:

@@ -2,7 +2,7 @@
 
 - register_routes 注册 /api/v1/plugins/extensions/astrbot_plugin_qqadmin_plus/*；
   前端经 window.AstrBotPluginView bridge 用相对路径（如 settings/bootstrap）调用。
-- 请求/响应使用 astrbot.api.web（要求 AstrBot >= 4.26.0，见 metadata.yaml）；
+- 请求/响应使用 astrbot.api.web（要求 AstrBot >= 4.29.0，见 metadata.yaml）；
   _wrap_handler 统一把 ValueError 转 400、未知异常转 500。
 - 具体逻辑委托 QQAdminPageService，本文件只做参数解析。
 """
@@ -21,8 +21,8 @@ from .core.join.state import JoinState
 from .data import QQAdminDB, QQAdminGlobalList
 from .group_cache import QQGroupInfoCache
 from .page_service import QQAdminPageService
-
-PLUGIN_NAME = "astrbot_plugin_qqadmin_plus"
+from .permission import PermissionManager
+from .utils import parse_bool
 
 
 class QQAdminWebController:
@@ -36,10 +36,12 @@ class QQAdminWebController:
         group_cache: QQGroupInfoCache,
         global_list: QQAdminGlobalList,
         banpro: BanproHandle,
+        permissions: PermissionManager,
         join_state: JoinState | None = None,
     ):
         self.context = context
-        self.service = QQAdminPageService(cfg, db, group_cache, global_list, banpro, join_state, context)
+        self.plugin_name = cfg.plugin_name
+        self.service = QQAdminPageService(cfg, db, group_cache, global_list, banpro, permissions, join_state, context)
 
     def register_routes(self) -> None:
         routes = [
@@ -160,7 +162,7 @@ class QQAdminWebController:
         ]
         for path, handler, methods, desc in routes:
             self.context.register_web_api(
-                f"/{PLUGIN_NAME}{path}",
+                f"/{self.plugin_name}{path}",
                 self._wrap_handler(handler),
                 methods,
                 desc,
@@ -186,14 +188,8 @@ class QQAdminWebController:
     @staticmethod
     def _parse_flag(payload: Any, key: str, default: bool) -> bool:
         """解析 0/1 开关参数：缺省或无法识别时回退到 default。"""
-        raw = str(payload.get(key, "") or "").strip().lower()
-        if not raw:
-            return default
-        if raw in {"1", "true", "yes", "on"}:
-            return True
-        if raw in {"0", "false", "no", "off"}:
-            return False
-        return default
+        value = parse_bool(payload.get(key))
+        return default if value is None else value
 
     def _wrap_handler(self, handler: Callable[[], Awaitable]) -> Callable[[], Awaitable]:
         async def wrapped():

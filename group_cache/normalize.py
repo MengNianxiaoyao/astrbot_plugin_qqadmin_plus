@@ -22,13 +22,6 @@ def format_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {message}"
 
 
-def extract_list(result: Any) -> list[dict[str, Any]]:
-    data = unwrap_data(result)
-    if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
-    return []
-
-
 def extract_object(result: Any) -> dict[str, Any]:
     data = unwrap_data(result)
     return data if isinstance(data, dict) else {}

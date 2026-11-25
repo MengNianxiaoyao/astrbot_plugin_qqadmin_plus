@@ -10,6 +10,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
+from ...utils import BackgroundTasks
 from .models import MAX_HISTORY, Lottery, finished_reason, instant_chance
 from .parse import clock_label
 from .render import result_lines, summary_lines
@@ -35,7 +36,7 @@ class LotteryEngine:
     def __init__(self, handle):
         self.handle = handle
         self.tasks: dict[str, asyncio.Task] = {}
-        self.bg_tasks: set[asyncio.Task] = set()
+        self.background = BackgroundTasks("抽奖后台任务")
         self._draw_retries: dict[str, asyncio.Task] = {}
         self._client_retry_at = 0.0
 
@@ -52,24 +53,14 @@ class LotteryEngine:
             task.cancel()
 
     def spawn(self, coro):
-        task = asyncio.create_task(coro)
-        self.bg_tasks.add(task)
-        task.add_done_callback(self._bg_done)
-
-    def _bg_done(self, task: asyncio.Task):
-        self.bg_tasks.discard(task)
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            logger.error(f"抽奖后台任务异常: {exc}", exc_info=exc)
+        self.background.spawn(coro)
 
     def cancel_all(self):
-        for task in [*self.tasks.values(), *self.bg_tasks, *self._draw_retries.values()]:
+        for task in [*self.tasks.values(), *self._draw_retries.values()]:
             task.cancel()
         self.tasks.clear()
-        self.bg_tasks.clear()
         self._draw_retries.clear()
+        self.background.cancel()
 
     # ============================== 创建 ==============================
 
@@ -170,12 +161,9 @@ class LotteryEngine:
 
     async def wait_and_draw(self, lottery: Lottery):
         delay = max(0.0, (lottery.expire_at or time.time()) - time.time())
-        try:
-            await asyncio.sleep(delay)
-            reason = lottery.label if lottery.mode == "time" else "已到截止时间"
-            await self.safe_draw(lottery, reason=reason)
-        except asyncio.CancelledError:
-            raise
+        await asyncio.sleep(delay)
+        reason = lottery.label if lottery.mode == "time" else "已到截止时间"
+        await self.safe_draw(lottery, reason=reason)
 
     async def safe_draw(
         self, lottery: Lottery, event: AiocqhttpMessageEvent | None = None, reason: str = ""
@@ -309,7 +297,7 @@ class LotteryEngine:
             break
 
         if client is None:
-            self._client_retry_at = time.time() + 10
+            self._client_retry_at = time.time() + DRAW_RETRY_DELAY
             logger.warning(f"抽奖没有可用的 aiocqhttp 连接（bot {lottery.bot_id or '未知'}）")
             return None
         self._client_retry_at = 0.0

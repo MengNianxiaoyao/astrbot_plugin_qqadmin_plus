@@ -1,17 +1,19 @@
 """群公告：发布（纯文本/带图）与查看。图片先下载到本地再传 OneBot 接口。"""
 
+import asyncio
 import textwrap
 import time
-from datetime import datetime
 
-import anyio
 from astrbot.api import logger
+from astrbot.api.message_components import Image
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
+from astrbot.core.utils.datetime_utils import generate_timestamp_id
+from astrbot.core.utils.quoted_message_parser import extract_quoted_message_images
 
 from ..config import PluginConfig
-from ..utils import download_file, extract_image_url, format_time, unwrap_data
+from ..utils import download_file, format_time, unwrap_data
 
 
 class NoticeHandle:
@@ -26,15 +28,20 @@ class NoticeHandle:
     ):
         """(引用图片)发布群公告 xxx"""
         if not content:
-            parts = event.message_str.split(maxsplit=1)
+            parts = event.get_message_str().split(maxsplit=1)
             content = parts[1].strip() if len(parts) > 1 else ""
         if not content:
             return "未指定群公告内容"
 
         gid = event.get_group_id()
         image_path = ""
-        if image_url := (image_url or extract_image_url(chain=event.get_messages())):
-            img_name = f"{gid}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+        if not image_url:
+            refs = await extract_quoted_message_images(event)
+            if not refs:
+                refs = [seg.url for seg in event.get_messages() if isinstance(seg, Image) and seg.url]
+            image_url = next((ref for ref in refs if ref.startswith(("http://", "https://"))), None)
+        if image_url:
+            img_name = f"{gid}_{generate_timestamp_id()}.png"
             temp_path = self.cfg.group_notice_dir / img_name
 
             logger.debug(f"Group notice image temp path: {temp_path}")
@@ -90,7 +97,7 @@ class NoticeHandle:
             except Exception as e:
                 logger.debug(f"清理群公告图片失败: {e}")
 
-        await anyio.to_thread.run_sync(_do)
+        await asyncio.to_thread(_do)
 
     async def get_group_notice(self, event: AiocqhttpMessageEvent):
         """查看群公告"""

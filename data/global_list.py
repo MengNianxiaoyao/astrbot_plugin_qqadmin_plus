@@ -3,6 +3,8 @@
 import asyncio
 from pathlib import Path
 
+from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
+
 from ..utils import load_json, save_json_atomic
 
 
@@ -48,7 +50,7 @@ class QQAdminGlobalList:
         self._ensure_loaded()
         if list_type not in self._PATHS:
             raise ValueError("list_type must be 'allow' or 'block'")
-        values = list(dict.fromkeys(str(uid).strip() for uid in ids if str(uid).strip()))
+        values = normalize_and_dedupe_strings(str(uid) for uid in ids)
         setattr(self, f"_{list_type}", values)
         self._save_json(getattr(self, self._PATHS[list_type]), values)
         return list(values)

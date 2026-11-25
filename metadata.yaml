@@ -7,4 +7,9 @@ author: 梦念逍遥
 repo: https://github.com/MengNianxiaoyao/astrbot_plugin_qqadmin_plus
 support_platforms:
   - aiocqhttp
-astrbot_version: ">=4.26.0"
+astrbot_version: ">=4.29.0"
+views:
+  - name: settings
+    target: plugin_page
+    title: QQ群管Plus
+    description: 群配置与全局配置：群规则、名单与禁词管理

@@ -3,7 +3,7 @@
 import asyncio
 
 from astrbot.api import logger
-from astrbot.core.message.components import At, Reply
+from astrbot.api.message_components import At, Reply
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -29,7 +29,7 @@ class RecallHandle:
             target_ids = get_ats(event) or [event.get_self_id()]
             target_ids = {str(uid) for uid in target_ids}
 
-            parts = event.message_str.split()
+            parts = event.get_message_str().split()
             # 排除 @ 目标自身的 QQ 号 token，避免“撤回 @12345”把尾号误当成数量
             count_parts = [p for p in parts if p not in target_ids]
             end_arg = count_parts[-1] if count_parts else ""

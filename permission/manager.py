@@ -3,11 +3,13 @@
 判定本身在 levels.evaluate_perm；本模块只负责取数（用户/Bot/被@等级 +
 按群 perms 取最低等级）与框架接入。两条路径（@perm_required 装饰器、
 llm_perm_block）在 perm_block 会合。
+
+PermissionManager 由 ``app.QQAdminApp`` 构造并绑定到插件实例
+（``plugin.permissions``），不再使用模块级单例，重载插件不会残留旧配置。
 """
 
 import asyncio
 import inspect
-import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from functools import wraps
 from typing import Any, cast
@@ -19,33 +21,23 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ..config import PluginConfig
 from ..data import QQAdminDB
-from ..utils import get_ats, get_group_member, get_nickname, get_target_ids
+from ..utils import TTLCache, get_ats, get_group_member, get_nickname, get_target_ids
 from .levels import PermLevel, evaluate_perm
 
 
 class PermissionManager:
-    _initialized = False
-
-    def __init__(self):
-        self.cfg: PluginConfig | None = None
-        self.db: QQAdminDB | None = None
-        self._perm_cache: dict[tuple[str, str], tuple[PermLevel, float]] = {}
-        self._perm_ttl = 10.0
-
-    def lazy_init(self, config: PluginConfig, db: QQAdminDB):
-        if self._initialized:
-            logger.debug("PermissionManager already initialized, refreshing instead")
-            self.refresh(config, db)
-            return
+    def __init__(self, config: PluginConfig, db: QQAdminDB):
         self.cfg = config
         self.db = db
-        self._initialized = True
+        self._perm_cache = TTLCache(ttl=10.0, capacity=500)
 
-    def refresh(self, config: PluginConfig, db: QQAdminDB | None = None):
-        self.cfg = config
+    def refresh(self, config: PluginConfig | None = None, db: QQAdminDB | None = None):
+        """默认群模板变更后刷新依赖；未传参数时只清等级缓存。"""
+        if config is not None:
+            self.cfg = config
         if db is not None:
             self.db = db
-        self._initialized = True
+        self._perm_cache.clear()
 
     async def get_perm_level(self, event: AiocqhttpMessageEvent, user_id: str | int) -> PermLevel:
         group_id = event.get_group_id()
@@ -54,12 +46,12 @@ class PermissionManager:
                 return PermLevel.UNKNOWN
         except Exception:
             return PermLevel.UNKNOWN
-        if self.cfg and str(user_id) in self.cfg.admins_id:
+        if str(user_id) in self.cfg.admins_id:
             return PermLevel.SUPERUSER
         cache_key = (str(group_id), str(user_id))
         cached = self._perm_cache.get(cache_key)
-        if cached and time.time() - cached[1] < self._perm_ttl:
-            return cached[0]
+        if cached is not None:
+            return cached
         try:
             info = await get_group_member(event.bot, group_id, user_id, timeout_secs=10, no_cache=True)
         except Exception:
@@ -77,11 +69,7 @@ class PermissionManager:
         # 查不到角色（接口超时/空结果）不缓存，避免短时间内连续误判
         if lvl == PermLevel.UNKNOWN:
             return lvl
-        self._perm_cache[cache_key] = (lvl, time.time())
-        # 简单容量控制
-        if len(self._perm_cache) > 500:
-            oldest = min(self._perm_cache.items(), key=lambda kv: kv[1][1])[0]
-            self._perm_cache.pop(oldest, None)
+        self._perm_cache.set(cache_key, lvl)
         return lvl
 
     async def bot_level_for(self, event: AiocqhttpMessageEvent, required: PermLevel) -> PermLevel:
@@ -107,11 +95,7 @@ class PermissionManager:
         user_level = await self.get_perm_level(event, user_id=event.get_sender_id())
 
         # 未指定权限，则默认至少需要管理员权限
-        group_config = (
-            self.db.get_group_snapshot(event.get_group_id())
-            if self.db is not None
-            else {"perms": self.cfg.perms if self.cfg else {}}
-        )
+        group_config = self.db.get_group_snapshot(event.get_group_id())
         perms = group_config.get("perms", {})
         required_level = PermLevel.from_str(str(perms.get(perm_key, "管理员")))
         if required_level is None:
@@ -161,7 +145,7 @@ class PermissionManager:
 
         惩罚失败（Bot 无权限、接口异常等）只记日志，不改变原来的越权提示。
         """
-        if not group_config.get("punish_enabled", True) or self.cfg is None:
+        if not group_config.get("punish_enabled", True):
             return ""
         ban_time = self.cfg.get_ban_time_with_range(group_config.get("punish_ban_time"), None)
         if ban_time <= 0:
@@ -193,18 +177,11 @@ class PermissionManager:
         target_ids: list[str] | None = None,
         public: bool = False,
     ) -> str | None:
-        if event.platform_meta.name != "aiocqhttp":
+        if event.get_platform_name() != "aiocqhttp":
             return "该工具仅支持通过 QQ 群聊调用"
 
         if event.is_private_chat():
             return "该工具仅支持在 QQ 群聊中调用"
-
-        if not self._initialized:
-            logger.error(
-                "PermissionManager is not initialized while checking LLM tool permission: %s",
-                perm_key,
-            )
-            return "内部错误：权限系统尚未正确加载"
 
         if public:
             return None
@@ -219,7 +196,10 @@ class PermissionManager:
         )
 
 
-perm_manager = PermissionManager()
+def _service_for(plugin_instance: Any) -> PermissionManager | None:
+    """从插件实例取应用装配的权限服务；缺失说明装配错误，按拒绝处理。"""
+    service = getattr(plugin_instance, "permissions", None)
+    return service if isinstance(service, PermissionManager) else None
 
 
 def private_only(message: str):
@@ -261,8 +241,8 @@ def perm_required(
     check_quote: bool = False,
     public: bool = False,
 ):
-    """
-    权限检查装饰器。
+    """权限检查装饰器。
+
     :param perm_key: 可选。用户执行命令所需的最低权限键名，默认使用被装饰函数的函数名。
     :param bot_perm: Bot 执行此命令所需的最低权限等级。
     :param check_at: 是否检查“是否有权对被@者实施操作”。
@@ -283,21 +263,20 @@ def perm_required(
             *args: Any,
             **kwargs: Any,
         ) -> AsyncGenerator[Any, Any]:
-
-            # 仅限aiocqhttp
-            if event.platform_meta.name != "aiocqhttp":
-                return
-
-            # 权限管理未初始化（私聊/群聊共用一次判断）
-            if not perm_manager._initialized or perm_manager.cfg is None:
-                logger.error(f"PermissionManager 未初始化（尝试访问权限项：{actual_perm_key}）")
+            service = _service_for(plugin_instance)
+            if service is None:
+                logger.error(f"PermissionManager 未装配（尝试访问权限项：{actual_perm_key}）")
                 yield event.plain_result("内部错误：权限系统未正确加载")
                 event.stop_event()
                 return
 
+            # 仅限 aiocqhttp
+            if event.get_platform_name() != "aiocqhttp":
+                return
+
             # 私聊处理：超管 + 命令显式放行才可执行，其余拒绝
             if event.is_private_chat():
-                if str(event.get_sender_id()) not in (perm_manager.cfg.admins_id or []):
+                if str(event.get_sender_id()) not in (service.cfg.admins_id or []):
                     yield event.plain_result("该命令仅支持在群聊中使用")
                     event.stop_event()
                     return
@@ -315,7 +294,7 @@ def perm_required(
             # 固定成员可用的公开命令：不读用户权限配置；Bot 仅需成员的直接放行，
             # 更高要求才查询 Bot 自身等级
             if public:
-                bot_level = await perm_manager.bot_level_for(event, bot_perm)
+                bot_level = await service.bot_level_for(event, bot_perm)
                 # UNKNOWN 是“查不到”而非“确认不足”：公开命令直接尝试，
                 # 由 OneBot 接口兜底，避免接口偶发超时误报“我没…权限”。
                 if bot_level != PermLevel.UNKNOWN and bot_level > bot_perm:
@@ -330,7 +309,7 @@ def perm_required(
                 return
 
             # 判断权限
-            result = await perm_manager.perm_block(
+            result = await service.perm_block(
                 event, bot_perm=bot_perm, perm_key=actual_perm_key, check_at=check_at, check_quote=check_quote
             )
             if result:

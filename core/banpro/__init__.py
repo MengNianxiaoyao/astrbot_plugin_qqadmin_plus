@@ -1,4 +1,4 @@
-"""禁言防护门面：对外 API 与拆分前完全一致，内部按词表/刷屏/投票分工。
+"""内容治理门面：违禁词、刷屏与投票，内部按子模块分工。
 
 子模块：lexicon.LexiconStore / spam.SpamDetector / vote.VoteSession。
 新人找逻辑去子模块；这里只做聚合转发。
@@ -10,6 +10,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ...config import PluginConfig
 from ...data import QQAdminDB
+from ...permission.manager import PermissionManager
 from .lexicon import LexiconStore
 from .spam import SpamDetector
 from .vote import VoteSession
@@ -18,14 +19,14 @@ __all__ = ["BanproHandle", "LexiconStore", "SpamDetector", "VoteSession"]
 
 
 class BanproHandle:
-    """禁言防护门面：对外 API 与拆分前完全一致，内部按词表/刷屏/投票分工。"""
+    """内容治理门面：违禁词/刷屏/投票对外入口，内部按子模块分工。"""
 
-    def __init__(self, config: PluginConfig, db: QQAdminDB):
+    def __init__(self, config: PluginConfig, db: QQAdminDB, permissions: PermissionManager):
         self.cfg = config
         self.db = db
         self.lexicon = LexiconStore(config, db)
         self.spam = SpamDetector(config, db)
-        self.votes = VoteSession(config, db)
+        self.votes = VoteSession(config, db, permissions)
 
     @property
     def builtin_ban_version(self) -> str:

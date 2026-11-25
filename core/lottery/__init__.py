@@ -2,7 +2,7 @@
 
 - 发起是 Bot 管理员私聊功能，问答在 .wizard；群聊调用由 main 的入口过滤器直接拒绝。
 - 每群同一时间只允许一场抽奖；多群联合共用奖池，开奖通知发送到所有参与群。
-- 持久化在 .store；开奖/发奖/广播在 .engine；文案渲染在 .render。
+- 持久化在 .lottery_store；开奖/发奖/广播在 .engine；文案渲染在 .render。
 """
 
 import asyncio
@@ -16,9 +16,9 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from ...config import PluginConfig, get_plugin_timezone
 from ...utils import get_ats, get_group_member, safe_int
 from .engine import LotteryEngine
+from .lottery_store import LotteryStore
 from .models import MAX_HISTORY, STORE_VERSION, Lottery, finished_reason
 from .render import active_text, history_text, join_progress_text, result_lines, user_history_text
-from .store import LotteryStore
 from .wizard import LotteryWizard
 
 

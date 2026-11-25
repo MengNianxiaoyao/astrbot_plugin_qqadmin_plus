@@ -1,6 +1,6 @@
 """宵禁门面：多 Bot 总管（初始化/命令入口/时间解析/全局启停）。
 
-子模块：store.CurfewStore / group.GroupCurfew / manager.BotCurfewManager。
+子模块：curfew_store.CurfewStore / group.GroupCurfew / curfew_manager.BotCurfewManager。
 新人找定时逻辑去 group，找多群管理去 manager，这里只做装配与命令入口。
 """
 
@@ -9,18 +9,19 @@ import asyncio
 from aiocqhttp import Event
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from astrbot.api import logger
+from astrbot.api.star import Context
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
     AiocqhttpAdapter,
 )
-from astrbot.core.star.context import Context
 
 from ...config import PluginConfig, get_plugin_timezone
+from ...group_cache import iter_aiocqhttp_adapters
 from ...utils import parse_clock
-from .manager import BotCurfewManager
-from .store import CurfewStore
+from .curfew_manager import BotCurfewManager
+from .curfew_store import CurfewStore
 
 __all__ = ["BotCurfewManager", "CurfewHandle", "CurfewStore"]
 
@@ -91,31 +92,12 @@ class CurfewHandle:
 
     async def initialize(self):
         async with self._init_lock:
-            tasks = [
-                self._initialize_aiocqhttp_adapter(inst)
-                for inst in self.context.platform_manager.platform_insts
-                if isinstance(inst, AiocqhttpAdapter)
-            ]
+            tasks = [self._initialize_aiocqhttp_adapter(inst) for inst in iter_aiocqhttp_adapters(self.context)]
             if tasks:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 for r in results:
                     if isinstance(r, Exception):
                         logger.error(f"宵禁初始化子任务异常: {r}")
-
-    @staticmethod
-    def parse_time(time_str: str) -> tuple[str, int, int] | None:
-        """
-        统一处理时间格式
-        输入: "HH:MM" 或带中文冒号 "HH：MM"
-        返回: (清洗后的字符串, hour:int, minute:int)
-        出错返回 None
-        """
-        time_str_clean = time_str.strip().replace("：", ":")
-        parsed = parse_clock(time_str_clean)
-        if parsed is None:
-            return None
-        hour, minute = parsed
-        return time_str_clean, hour, minute
 
     async def start_curfew(
         self,
@@ -126,17 +108,16 @@ class CurfewHandle:
         if not input_start_time or not input_end_time:
             return "未输入范围 HH:MM HH:MM"
 
-        start_parsed = self.parse_time(input_start_time)
-        end_parsed = self.parse_time(input_end_time)
-
-        if not start_parsed or not end_parsed:
+        start = parse_clock(input_start_time)
+        end = parse_clock(input_end_time)
+        if not start or not end:
             return "时间格式错误，应为 HH:MM"
-
-        start_str, start_h, start_m = start_parsed
-        end_str, end_h, end_m = end_parsed
-
-        if start_h == end_h and start_m == end_m:
+        if start == end:
             return "开始时间和结束时间不能相同"
+
+        # 统一存成 HH:MM，兼容命令里写成 9:5 或中文冒号
+        start_str = f"{start[0]:02d}:{start[1]:02d}"
+        end_str = f"{end[0]:02d}:{end[1]:02d}"
 
         curfew_mgr = self.curfew_managers.get(event.get_self_id())
         if not curfew_mgr:

@@ -4,6 +4,8 @@
 - get_group_member / get_nickname：群资料带超时，昵称自动降级陌生人资料。
 - send_lines：按行分片发送，一行内容不会按字数截断。
 - get_ats 排除 Bot 自身；parse_bool 认“开/关/on/off/1/0”等，非法回 default。
+- unwrap_data / extract_list / extract_dicts：OneBot 响应取数的唯一出口。
+- TTLCache / BackgroundTasks：带 TTL 的缓存与后台任务集合的共用实现。
 - parse_cq_to_chain 只认 at/image，未知类型/非法参数保留原文不丢弃；
   本地图片必须落在 allowed_roots 内，否则拦截为占位符（防任意文件读取）。
 """
@@ -11,14 +13,14 @@
 import asyncio
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import anyio
 from aiohttp import ClientSession
 from astrbot.api import logger
-from astrbot.core.message.components import At, BaseMessageComponent, Image, Plain, Reply
+from astrbot.api.message_components import At, Image, Plain, Reply
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -155,26 +157,18 @@ def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
 
 
 def is_group_admin(event: AiocqhttpMessageEvent) -> bool:
-    """群主/管理员判定。
+    """群主/管理员判定：优先用 AstrBot 的事件接口，原始 sender.role 兜底。
 
     部分 AstrBot 版本不会把 OneBot sender.role 写回 event.role，导致
     `event.is_admin()` 在 aiocqhttp 下恒为 False；这里直接读原始事件里的
     sender.role，避免把管理员的发言当成刷屏/违禁词误处理。
     """
+    if event.is_admin():
+        return True
     raw = getattr(event.message_obj, "raw_message", None)
     sender = raw.get("sender") if isinstance(raw, dict) else None
     role = str((sender or {}).get("role", "")).lower()
     return role in {"owner", "admin"}
-
-
-def get_reply_message_str(event: AiocqhttpMessageEvent) -> str | None:
-    """
-    获取被引用的消息解析后的纯文本消息字符串。
-    """
-    return next(
-        (seg.message_str for seg in event.message_obj.message if isinstance(seg, Reply)),
-        "",
-    )
 
 
 def get_reply_message_id(event: AiocqhttpMessageEvent) -> str | None:
@@ -216,6 +210,21 @@ def unwrap_data(result: Any) -> Any:
     return result
 
 
+def extract_list(result: Any) -> list[dict]:
+    """从 OneBot 响应中取裸列表里的 dict 条目（兼容 ``{"data": [...]}`` 包裹）。"""
+    holder = unwrap_data(result)
+    if isinstance(holder, list):
+        return [item for item in holder if isinstance(item, dict)]
+    return []
+
+
+def extract_dicts(result: Any, key: str) -> list[dict]:
+    """从 OneBot 响应的 ``key`` 字段取 dict 列表，非 dict 条目直接丢弃。"""
+    holder = unwrap_data(result)
+    raw = holder.get(key, []) if isinstance(holder, dict) else []
+    return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
 def extract_messages(result: Any) -> list[dict]:
     """从群消息历史响应中提取消息列表，非 dict 条目直接丢弃。
 
@@ -223,12 +232,9 @@ def extract_messages(result: Any) -> list[dict]:
     {"data": {"messages": [...]}}（二次封装）与裸 list。
     """
     holder = unwrap_data(result)
-    if isinstance(holder, dict):
-        raw = holder.get("messages", []) or []
-        return [m for m in raw if isinstance(m, dict)]
     if isinstance(holder, list):
-        return [m for m in holder if isinstance(m, dict)]
-    return []
+        return [item for item in holder if isinstance(item, dict)]
+    return extract_dicts(holder, "messages")
 
 
 def extract_message_id(result) -> str | None:
@@ -281,26 +287,13 @@ async def download_file(
                         chunks.append(chunk)
                     else:
                         file = b"".join(chunks)
-                        await anyio.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-                        async with await anyio.open_file(save_path, "wb") as img_file:
-                            await img_file.write(file)
+                        await asyncio.to_thread(save_path.parent.mkdir, parents=True, exist_ok=True)
+                        await asyncio.to_thread(save_path.write_bytes, file)
                         logger.info(f"文件已保存: {save_path}")
                         return save_path
             except Exception as e:
                 logger.error(f"文件下载失败({candidate}): {e}")
 
-    return None
-
-
-def extract_image_url(chain: list[BaseMessageComponent]) -> str | None:
-    """从消息链中提取图片URL"""
-    for seg in chain:
-        if isinstance(seg, Image):
-            return seg.url
-        elif isinstance(seg, Reply) and seg.chain:
-            for reply_seg in seg.chain:
-                if isinstance(reply_seg, Image):
-                    return reply_seg.url
     return None
 
 
@@ -323,9 +316,9 @@ def parse_bool(mode: str | bool | None, default: bool | None = False):
         return mode
     mode = str(mode).strip().lower()
     match mode:
-        case "开" | "开启" | "启用" | "on" | "true" | "1" | "是" | "真":
+        case "开" | "开启" | "启用" | "on" | "true" | "1" | "是" | "真" | "yes":
             return True
-        case "关" | "关闭" | "禁用" | "off" | "false" | "0" | "否" | "假":
+        case "关" | "关闭" | "禁用" | "off" | "false" | "0" | "否" | "假" | "no":
             return False
         case _:
             return default
@@ -443,3 +436,59 @@ def parse_cq_to_chain(text: str, allowed_roots: list[Path] | None = None) -> lis
         chain.append(Plain(rest))
 
     return chain
+
+
+class TTLCache:
+    """带过期时间与容量上限的缓存：过期条目按访问惰性删除，写满后淘汰最旧的一条。"""
+
+    def __init__(self, ttl: float, capacity: int):
+        self._ttl = ttl
+        self._capacity = capacity
+        self._items: dict[Any, tuple[Any, float]] = {}
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        item = self._items.get(key)
+        if item is None:
+            return default
+        value, ts = item
+        if time.time() - ts >= self._ttl:
+            self._items.pop(key, None)
+            return default
+        return value
+
+    def set(self, key: Any, value: Any) -> None:
+        self._items[key] = (value, time.time())
+        if len(self._items) > self._capacity:
+            oldest = min(self._items.items(), key=lambda item: item[1][1])[0]
+            self._items.pop(oldest, None)
+
+    def clear(self) -> None:
+        self._items.clear()
+
+
+class BackgroundTasks:
+    """后台任务集合：保留任务引用防回收，异常统一记日志。"""
+
+    def __init__(self, label: str):
+        self._label = label
+        self._tasks: set[asyncio.Task] = set()
+
+    def spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._on_done)
+
+    def _on_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        if exc := task.exception():
+            logger.error(f"{self._label}异常: {exc}", exc_info=exc)
+
+    def cancel(self) -> list[asyncio.Task]:
+        """取消未完成任务并清空集合；返回被取消的任务，供调用方 gather。"""
+        tasks = [task for task in self._tasks if not task.done()]
+        for task in tasks:
+            task.cancel()
+        self._tasks.clear()
+        return tasks

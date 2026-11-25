@@ -6,14 +6,15 @@
 """
 
 from astrbot.api import logger
-from astrbot.core.message.components import Reply
+from astrbot.api.message_components import Image, Reply
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
+from astrbot.core.utils.quoted_message_parser import extract_quoted_message_images
 
 from ..config import PluginConfig
 from ..data import QQAdminDB, QQAdminGlobalList
-from ..utils import extract_image_url, format_time, get_nickname, get_target_ids, unwrap_data
+from ..utils import format_time, get_nickname, get_target_ids, unwrap_data
 
 
 class NormalHandle:
@@ -256,7 +257,11 @@ class NormalHandle:
         return "\n".join(lines) if lines else "没有群精华消息"
 
     async def set_group_portrait(self, event: AiocqhttpMessageEvent, image_url: str | None = None):
-        image_url = image_url or extract_image_url(chain=event.get_messages())
+        if not image_url:
+            refs = await extract_quoted_message_images(event)
+            if not refs:
+                refs = [seg.url for seg in event.get_messages() if isinstance(seg, Image) and seg.url]
+            image_url = refs[0] if refs else None
         if not image_url:
             return "未获取到新头像"
         try:

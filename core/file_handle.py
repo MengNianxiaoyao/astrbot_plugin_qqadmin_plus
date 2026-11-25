@@ -6,30 +6,19 @@
 
 import re
 
-import anyio
 from astrbot.api import logger
-from astrbot.core.message.components import File, Image, Reply, Video
+from astrbot.api.message_components import File, Image, Reply, Video
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
 from ..config import PluginConfig
-from ..utils import download_file, format_time, unwrap_data
+from ..utils import download_file, extract_dicts, format_time
 
 
 class FileHandle:
     def __init__(self, config: PluginConfig):
         self.data_dir = config.file_dir
-
-    @staticmethod
-    def _list_of(response, key: str) -> list:
-        """容错取出响应中的文件夹/文件列表（兼容 {"data": {...}} 包裹）"""
-        data = unwrap_data(response)
-        if isinstance(data, dict):
-            items = data.get(key, [])
-            if isinstance(items, list):
-                return [f for f in items if isinstance(f, dict)]
-        return []
 
     async def _parse_path(self, event: AiocqhttpMessageEvent, path: str) -> tuple[str | None, str | None]:
         """
@@ -67,7 +56,7 @@ class FileHandle:
             # 如果右边是数字，需要进入对应文件夹再解析（复用已拉取的 response 避免二次请求）
             if right.isdigit() and folder_name:
                 target_folder = next(
-                    (f for f in self._list_of(response, "folders") if f.get("folder_name") == folder_name), None
+                    (f for f in extract_dicts(response, "folders") if f.get("folder_name") == folder_name), None
                 )
                 if target_folder:
                     folder_files = await event.bot.get_group_files_by_folder(
@@ -104,7 +93,7 @@ class FileHandle:
         """从根目录下找到指定文件夹, 返回文件夹数据"""
         response = await event.bot.get_group_root_files(group_id=int(event.get_group_id()))
         return next(
-            (folder for folder in self._list_of(response, "folders") if folder_name == folder.get("folder_name")),
+            (folder for folder in extract_dicts(response, "folders") if folder_name == folder.get("folder_name")),
             None,
         )
 
@@ -114,12 +103,12 @@ class FileHandle:
         mapping = {}
 
         idx = 1
-        for folder in self._list_of(data, "folders"):
+        for folder in extract_dicts(data, "folders"):
             info.append(f"▶{idx}. {folder.get('folder_name', '未知')}")
             mapping[idx] = ("folder", folder.get("folder_name", ""))
             idx += 1
 
-        for file in self._list_of(data, "files"):
+        for file in extract_dicts(data, "files"):
             info.append(f"📄{idx}. {file.get('file_name', '未知')}")
             mapping[idx] = ("file", file.get("file_name", ""))
             idx += 1
@@ -160,7 +149,7 @@ class FileHandle:
         response = await event.bot.get_group_files_by_folder(
             group_id=int(event.get_group_id()), folder_id=target_folder["folder_id"]
         )
-        file = next((f for f in self._list_of(response, "files") if f.get("file_name") == file_name), None)
+        file = next((f for f in extract_dicts(response, "files") if f.get("file_name") == file_name), None)
         return target_folder, file
 
     async def _save_temp_file(self, event: AiocqhttpMessageEvent, file_name: str):
@@ -179,7 +168,7 @@ class FileHandle:
                     return None
                 file_path = self.data_dir / safe_name
                 await download_file(url, file_path)
-                if await anyio.Path(file_path).exists():
+                if file_path.exists():
                     return file_path
                 logger.error(f"下载文件失败：{url}")
             else:
@@ -265,7 +254,7 @@ class FileHandle:
             else:
                 response = await event.bot.get_group_root_files(group_id=group_id)
                 file = next(
-                    (f for f in self._list_of(response, "files") if file_name == f.get("file_name")),
+                    (f for f in extract_dicts(response, "files") if file_name == f.get("file_name")),
                     None,
                 )
             if file:
@@ -314,7 +303,7 @@ class FileHandle:
                 # 根目录单文件
                 response = await client.get_group_root_files(group_id=group_id)
                 if file := next(
-                    (f for f in self._list_of(response, "files") if folder_name == f.get("file_name")),
+                    (f for f in extract_dicts(response, "files") if folder_name == f.get("file_name")),
                     None,
                 ):
                     return self._format_file_info(file)
@@ -324,7 +313,7 @@ class FileHandle:
             # 根目录文件
             response = await client.get_group_root_files(group_id=group_id)
             if file := next(
-                (f for f in self._list_of(response, "files") if file_name == f.get("file_name")),
+                (f for f in extract_dicts(response, "files") if file_name == f.get("file_name")),
                 None,
             ):
                 return self._format_file_info(file)

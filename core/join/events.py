@@ -1,4 +1,4 @@
-from aiocqhttp import CQHttp
+from aiocqhttp import CQHttp, MessageSegment
 from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -52,7 +52,7 @@ class JoinEvents:
         sent_ids: list[str] = []
         for admin_id in self.cfg.admins_id:
             try:
-                result = await client.send_private_msg(user_id=int(admin_id), message=message)
+                result = await client.send_private_msg(user_id=int(admin_id), message=MessageSegment.text(message))
                 mid = extract_message_id(result)
                 if mid:
                     sent_ids.append(mid)
@@ -154,10 +154,15 @@ class JoinEvents:
         if group_config.get("admin_audit", self.cfg.admin_audit):
             sent_ids = await self._send_admin(client, notice)
         else:
-            result = await event.send(event.plain_result(notice))
-            mid = extract_message_id(result)
-            if mid:
-                sent_ids.append(mid)
+            # event.send() 固定返回 None，拿不到 message_id；这里直接调 OneBot 接口取回执。
+            try:
+                result = await client.send_group_msg(group_id=int(gid), message=MessageSegment.text(notice))
+                mid = extract_message_id(result)
+                if mid:
+                    sent_ids.append(mid)
+            except Exception as e:
+                logger.warning(f"发送进群审核通知失败，尝试事件通道: {e}")
+                await event.send(event.plain_result(notice))
         for mid in sent_ids:
             try:
                 platform_id = event.get_platform_id()

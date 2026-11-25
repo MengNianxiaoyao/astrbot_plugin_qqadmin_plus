@@ -23,9 +23,9 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
 )
 
 from ..data import QQAdminDB
-from .utils import (
+from ..utils import extract_list, safe_int
+from .normalize import (
     build_fallback_group,
-    extract_list,
     extract_object,
     format_error,
     needs_detail_refresh,
@@ -44,17 +44,20 @@ HYDRATE_CONCURRENCY = 8
 STALE_VOTES_REQUIRED = 2
 
 
-def iter_aiocqhttp_clients(context: Any) -> list[Any]:
-    """遍历所有 aiocqhttp 适配器并返回可用 client（面板与抽奖共用的连接发现）。"""
-    clients: list[Any] = []
+def iter_aiocqhttp_adapters(context: Any) -> list[AiocqhttpAdapter]:
+    """枚举所有 aiocqhttp 平台适配器（连接发现的唯一入口）。"""
     try:
         insts = list(context.platform_manager.platform_insts)
     except Exception as e:
         logger.warning(f"获取平台实例失败: {e}")
-        return clients
-    for inst in insts:
-        if not isinstance(inst, AiocqhttpAdapter):
-            continue
+        return []
+    return [inst for inst in insts if isinstance(inst, AiocqhttpAdapter)]
+
+
+def iter_aiocqhttp_clients(context: Any) -> list[Any]:
+    """遍历所有 aiocqhttp 适配器并返回可用 client（面板与抽奖共用的连接发现）。"""
+    clients: list[Any] = []
+    for inst in iter_aiocqhttp_adapters(context):
         try:
             client = inst.get_client()
         except Exception:
@@ -180,10 +183,7 @@ class QQGroupInfoCache:
         if group_info.get("source") == "live":
             self._stale_votes.pop(group_id, None)
             return False
-        try:
-            member_count = int(group_info.get("member_count", 0))
-        except (TypeError, ValueError):
-            member_count = 0
+        member_count = safe_int(group_info.get("member_count", 0), 0)
         if member_count > 0:
             self._stale_votes.pop(group_id, None)
             return False
@@ -641,7 +641,7 @@ class QQGroupInfoCache:
     def _iter_clients(self) -> list[Any]:
         return iter_aiocqhttp_clients(self.context)
 
-    # ---------- 实例相关小工具（纯数据变换见 .utils，可单测） ----------
+    # ---------- 实例相关小工具（纯数据变换见 .normalize，可单测） ----------
 
     def _describe_client(self, index: int, client: Any) -> str:
         """给 client 一个可读标识（优先用已缓存的 bot QQ，便于多开时定位）。"""
