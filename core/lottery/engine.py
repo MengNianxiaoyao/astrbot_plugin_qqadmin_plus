@@ -73,7 +73,7 @@ class LotteryEngine:
 
     # ============================== 创建 ==============================
 
-    async def create(self, group_id: str, sender_id: str, data: dict[str, Any], client: Any) -> Lottery:
+    async def create(self, sender_id: str, data: dict[str, Any], client: Any) -> Lottery:
         busy = [gid for gid in data["groups"] if gid in self.handle.active]
         if busy:
             raise LotteryConflictError(busy)
@@ -95,8 +95,8 @@ class LotteryEngine:
             else:
                 deadline_label = clock_label(expire_at, self.handle.tz, "截止")
 
-        # 私聊发起时当前没有群，用第一个参与群作为主群（定时任务与日志使用）
-        primary_group = group_id if group_id in data["groups"] else data["groups"][0]
+        # 私聊发起没有当前群，用第一个参与群作为主群（定时任务与日志使用）
+        primary_group = data["groups"][0]
         lottery = Lottery(
             group_id=primary_group,
             groups=data["groups"],
@@ -109,6 +109,7 @@ class LotteryEngine:
             stock=list(data["stock"]),
             min_level=data["min_level"],
             titles=data["titles"],
+            threshold_all=data.get("threshold_all", False),
             expire_at=expire_at,
             target_count=data["target_count"],
             max_participants=data["max_participants"],
@@ -135,11 +136,8 @@ class LotteryEngine:
             lines.append("每次参与立即随机判定，名额抽完、人数达上限或到截止时间即结束")
         lines.append("发送「/参与抽奖」参加；同一时间每群仅一场抽奖")
         text = "\n".join(lines)
-        if event.is_private_chat():
-            await event.send(event.plain_result(f"抽奖已创建，开始公告已发送到参与群：{'、'.join(lottery.groups)}"))
-            await self.broadcast(lottery, text)
-        else:
-            await self.broadcast(lottery, text, event=event)
+        await event.send(event.plain_result(f"抽奖已创建，开始公告已发送到参与群：{'、'.join(lottery.groups)}"))
+        await self.broadcast(lottery, text)
 
     # ============================== 参与 / 开奖 ==============================
 
@@ -364,22 +362,9 @@ class LotteryEngine:
         await self.broadcast(lottery, text, skip={event.get_group_id()})
         return [text]
 
-    async def broadcast(
-        self,
-        lottery: Lottery,
-        text: str,
-        event: AiocqhttpMessageEvent | None = None,
-        skip: set[str] | None = None,
-    ):
-        """向所有参与群发送同一份通知：当前群走事件回执，其余群走 Bot 客户端。"""
-        sent: set[str] = set()
-        if event is not None:
-            try:
-                await event.send(event.plain_result(text))
-                sent.add(event.get_group_id())
-            except Exception as e:
-                logger.warning(f"抽奖通知发送失败({event.get_group_id()}): {e}")
-        remaining = [gid for gid in lottery.groups if gid not in sent and gid not in (skip or ())]
+    async def broadcast(self, lottery: Lottery, text: str, skip: set[str] | None = None):
+        """向除 skip 外的所有参与群发送同一份通知。"""
+        remaining = [gid for gid in lottery.groups if gid not in (skip or ())]
         if not remaining:
             return
         client = await self.client_for(lottery)

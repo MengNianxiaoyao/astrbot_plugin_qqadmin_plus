@@ -39,7 +39,7 @@ from .parse import (
 class _WizardFilter(SessionFilter):
     """只把发起人的消息交给抽奖问答，其他人的消息照常走原流程。
 
-    scope 为群号（群聊）或 unified_msg_origin（私聊），保证私聊发起时也能正确接管回答。
+    scope 为 unified_msg_origin，保证私聊唤起时只接管该会话的回答。
     """
 
     def __init__(self, scope: str, sender_id: str):
@@ -61,14 +61,7 @@ class LotteryWizard:
     async def start(self, event: AiocqhttpMessageEvent):
         h = self.handle
         await h.ensure_ready()
-        group_id = str(event.get_group_id() or "")
-        scope = group_id or event.unified_msg_origin
-        if group_id and group_id in h.active:
-            existing = h.active[group_id]
-            await event.send(
-                event.plain_result(f"本群已有抽奖进行中：{existing.prize}（{existing.label}），请等待开奖后再发起")
-            )
-            return
+        scope = event.unified_msg_origin
         if scope in h.wizards:
             await event.send(event.plain_result("正在创建抽奖，请先完成当前问答或发送「取消」"))
             return
@@ -81,7 +74,7 @@ class LotteryWizard:
         try:
             await event.send(event.plain_result("【发起抽奖】请输入奖品名称（发送「取消」退出）"))
         except Exception as e:
-            # 引导消息发不出去时立即释放占位，避免该群永久停留在“创建中”
+            # 引导消息发不出去时立即释放占位，避免该会话永久停留在“创建中”
             h.wizards.difference_update(locked)
             logger.warning(f"抽奖引导发送失败: {e}")
             event.stop_event()
@@ -98,7 +91,7 @@ class LotteryWizard:
                 return False
             data["candidates"] = candidates
             step["name"] = "groups"
-            await self._send_group_choices(wait_event, candidates, group_id)
+            await self._send_group_choices(wait_event, candidates)
             return True
 
         @session_waiter(timeout=WIZARD_TIMEOUT)
@@ -199,7 +192,7 @@ class LotteryWizard:
                     return
 
             elif step["name"] == "groups":
-                groups, error = self._select_groups(text, data["candidates"], group_id)
+                groups, error = self._select_groups(text, data["candidates"])
                 if error:
                     await wait_event.send(wait_event.plain_result(error))
                     controller.keep(WIZARD_TIMEOUT, reset_timeout=True)
@@ -216,9 +209,9 @@ class LotteryWizard:
                     await wait_event.send(wait_event.plain_result(f"无法识别门槛。\n{THRESHOLD_PROMPT}"))
                     controller.keep(WIZARD_TIMEOUT, reset_timeout=True)
                     return
-                data["min_level"], data["titles"] = parsed
+                data["min_level"], data["titles"], data["threshold_all"] = parsed
                 try:
-                    lottery = await h.engine.create(group_id, sender_id, data, wait_event.bot)
+                    lottery = await h.engine.create(sender_id, data, wait_event.bot)
                 except LotteryConflictError as e:
                     # 选择期间群被另一场抽奖占用：解除旧选择，回到群选择步骤
                     old_groups = data.pop("groups", [])
@@ -228,7 +221,7 @@ class LotteryWizard:
                     await wait_event.send(
                         wait_event.plain_result(f"群 {'、'.join(e.groups)} 刚被其他抽奖占用，请重新选择参与群")
                     )
-                    await self._send_group_choices(wait_event, data["candidates"], group_id)
+                    await self._send_group_choices(wait_event, data["candidates"])
                     controller.keep(WIZARD_TIMEOUT, reset_timeout=True)
                     return
                 await h.save(immediate=True)
@@ -250,14 +243,13 @@ class LotteryWizard:
             event.stop_event()
 
     async def _fetch_joined_groups(self, event: AiocqhttpMessageEvent) -> list[tuple[str, str]] | None:
-        """拉取本 Bot 已加入的群，当前群排第一位；失败返回 None。"""
+        """拉取本 Bot 已加入的群；失败返回 None。"""
         try:
             raw = await event.bot.get_group_list() or []
         except Exception as e:
             logger.warning(f"抽奖获取群列表失败: {e}")
             return None
 
-        owner = str(event.get_group_id() or "")
         names: dict[str, str] = {}
         if isinstance(raw, list):
             for item in raw:
@@ -269,46 +261,25 @@ class LotteryWizard:
                 name = str(item.get("group_name") or item.get("group_remark") or gid).strip() or gid
                 name = name.replace("\r", " ").replace("\n", " ")
                 names[gid] = name[:20]
-        if owner.isdigit():
-            names.setdefault(owner, owner)
-            others = sorted(((gid, name) for gid, name in names.items() if gid != owner), key=lambda item: int(item[0]))
-            return [(owner, names[owner]), *others]
         return sorted(names.items(), key=lambda item: int(item[0]))
 
-    async def _send_group_choices(
-        self, event: AiocqhttpMessageEvent, candidates: list[tuple[str, str]], owner_group: str
-    ):
-        if owner_group:
-            header = (
-                f"请选择参与抽奖的群：回复列表中的序号或群号，多个用空格/逗号分隔，"
-                f"最多 {MAX_GROUPS} 个（含本群，本群默认参与）。\n仅本群参与回复“无”。"
-            )
-        else:
-            header = (
-                f"请选择参与抽奖的群：回复列表中的序号或群号，多个用空格/逗号分隔，至少 1 个、最多 {MAX_GROUPS} 个。"
-            )
-        lines: list[str] = []
-        for idx, (gid, name) in enumerate(candidates, 1):
-            mark = "【本群】" if owner_group and gid == owner_group else ""
-            lines.append(f"{idx}. {name}（{gid}）{mark}")
+    async def _send_group_choices(self, event: AiocqhttpMessageEvent, candidates: list[tuple[str, str]]):
+        header = f"请选择参与抽奖的群：回复列表中的序号或群号，多个用空格/逗号分隔（1~{MAX_GROUPS} 个）。"
+        lines = [f"{idx}. {name}（{gid}）" for idx, (gid, name) in enumerate(candidates, 1)]
         await send_lines(event, header, lines, 40)
 
-    def _select_groups(
-        self, text: str, candidates: list[tuple[str, str]], owner_group: str
-    ) -> tuple[list[str], str | None]:
-        """从机器人已加入的群中按序号/群号选择；群聊发起时当前群默认参与，私聊发起时至少选一个群。"""
+    def _select_groups(self, text: str, candidates: list[tuple[str, str]]) -> tuple[list[str], str | None]:
+        """从机器人已加入的群中按序号/群号选择，至少选一个。"""
         if text in {"无", "本群", "仅本群"}:
-            if not owner_group:
-                return [], "私聊发起时请至少选择一个参与群"
-            return [owner_group], None
+            return [], "私聊发起时请至少选择一个参与群"
 
         tokens = [token for token in re.split(r"[\s,，、]+", text) if token]
         if not tokens:
-            return [], "请回复列表中的序号或群号；仅本群参与请回复“无”"
+            return [], "请回复列表中的序号或群号"
 
         index_map = {str(idx): gid for idx, (gid, _name) in enumerate(candidates, 1)}
         valid_ids = {gid for gid, _name in candidates}
-        chosen: list[str] = [owner_group] if owner_group else []
+        chosen: list[str] = []
         for token in tokens:
             if token.isdigit() and len(token) >= 5 and token in valid_ids:
                 gid = token
@@ -322,10 +293,8 @@ class LotteryWizard:
         if not chosen:
             return [], "请至少选择一个参与群"
         if len(chosen) > MAX_GROUPS:
-            return [], f"一次最多选择 {MAX_GROUPS} 个群（含本群），请重新选择"
-        busy = [
-            gid for gid in chosen if gid != owner_group and (gid in self.handle.active or gid in self.handle.wizards)
-        ]
+            return [], f"一次最多选择 {MAX_GROUPS} 个群，请重新选择"
+        busy = [gid for gid in chosen if gid in self.handle.active or gid in self.handle.wizards]
         if busy:
             return [], f"群 {'、'.join(busy)} 已有进行中或创建中的抽奖，请换一个或等其结束"
         return chosen, None

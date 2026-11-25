@@ -13,6 +13,8 @@ def threshold_text(lottery: Lottery) -> str:
         parts.append(f"群等级≥{lottery.min_level}")
     if lottery.titles:
         parts.append("头衔" + "/".join(f"「{title}」" for title in lottery.titles))
+    if len(parts) == 2 and lottery.threshold_all:
+        return "且".join(parts)
     return "、".join(parts) or "无"
 
 

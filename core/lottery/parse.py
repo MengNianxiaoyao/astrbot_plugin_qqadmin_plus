@@ -50,7 +50,9 @@ STOCK_PROMPT = (
 )
 THRESHOLD_PROMPT = (
     "请设置参与门槛（可组合，例如：等级10 头衔欧皇 头衔管理）；\n"
-    "多个头衔满足其一即可，也可写成 头衔欧皇、管理。不需要门槛请发送“无”。门槛只对本次抽奖生效。"
+    "只写等级时按等级拦截，只写头衔时按头衔放行；两者都写时默认满足任意一项即可参与，\n"
+    "写成「等级10 且 头衔管理」则要求同时满足等级和头衔。多个头衔满足其一，也可写成 头衔欧皇、管理。\n"
+    "不需要门槛请发送“无”。门槛只对本次抽奖生效。"
 )
 TIME_ERROR_PROMPT = f"无法识别时间。\n{DEADLINE_PROMPT}"
 
@@ -138,13 +140,23 @@ def parse_draw_mode(value: str, tz: zoneinfo.ZoneInfo) -> tuple[str, float | Non
     return None
 
 
-def parse_threshold(value: str) -> tuple[int, list[str]] | None:
-    """解析参与门槛，返回 (最低群等级, 头衔列表)；头衔满足其一即可，非法返回 None。"""
+_THRESHOLD_ALL_TOKENS = {"且", "并", "同时", "and", "AND", "And"}
+
+
+def parse_threshold(value: str) -> tuple[int, list[str], bool] | None:
+    """解析参与门槛，返回 (最低群等级, 头衔列表, 是否两者都要满足)，非法返回 None。
+
+    默认等级与头衔满足其一即可；写成 `等级10 且 头衔管理` 时两者都必须满足。
+    """
     text = value.strip()
     if text in {"无", "没有", "跳过", "不设", "默认"}:
-        return 0, []
+        return 0, [], False
     min_level, titles = 0, []
+    require_all = False
     for token in text.split():
+        if token in _THRESHOLD_ALL_TOKENS:
+            require_all = True
+            continue
         match = _LEVEL_RE.fullmatch(token) or _LEVEL_RE_ALT.fullmatch(token)
         if match:
             min_level = int(match.group(1))
@@ -165,7 +177,8 @@ def parse_threshold(value: str) -> tuple[int, list[str]] | None:
         return None
     if not 0 <= min_level <= 100 or len(titles) > MAX_TITLES:
         return None
-    return min_level, titles
+    # 只有一个条件时“且/或”没有区别，统一按任一处理
+    return min_level, titles, require_all and bool(min_level and titles)
 
 
 def parse_delivery(value: str) -> str | None:

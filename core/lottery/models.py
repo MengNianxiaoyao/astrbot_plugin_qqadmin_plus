@@ -44,6 +44,8 @@ class Lottery:
     winners: list[tuple[str, str]] = field(default_factory=list)
     min_level: int = 0
     titles: list[str] = field(default_factory=list)
+    # 等级与头衔同时设置时：False=满足其一（或），True=两者都要满足（且）
+    threshold_all: bool = False
     expire_at: float | None = None
     target_count: int | None = None
     max_participants: int | None = None

@@ -195,6 +195,22 @@ class LotteryHandle:
 
         level = safe_int(member.get("level"), 0)
         title = str(member.get("title") or "").strip()
+        if lottery.min_level and lottery.titles:
+            level_ok = level >= lottery.min_level
+            title_ok = title in lottery.titles
+            passed = (level_ok and title_ok) if lottery.threshold_all else (level_ok or title_ok)
+            if passed:
+                return None
+            allowed = "/".join(f"「{item}」" for item in lottery.titles)
+            if lottery.threshold_all:
+                return (
+                    f"参与门槛：群等级需不低于 {lottery.min_level} 级"
+                    f"且群头衔需为 {allowed} 之一（你当前 {level} 级、头衔：{title or '无'}）"
+                )
+            return (
+                f"参与门槛：群等级需不低于 {lottery.min_level} 级，"
+                f"或群头衔为 {allowed} 之一（你当前 {level} 级、头衔：{title or '无'}）"
+            )
         if lottery.min_level and level < lottery.min_level:
             return f"参与门槛：群等级需不低于 {lottery.min_level} 级（你当前 {level} 级）"
         if lottery.titles and title not in lottery.titles:
