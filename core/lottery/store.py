@@ -128,6 +128,12 @@ class LotteryStore:
             if isinstance(user_groups_raw, dict)
             else {}
         )
+        pending_raw = record.get("pending_items")
+        pending_items = (
+            {str(uid): str(item) for uid, item in pending_raw.items() if str(item)}
+            if isinstance(pending_raw, dict)
+            else {}
+        )
         winners = [
             (str(item[0]), str(item[1]))
             for item in (record.get("winners") or [])
@@ -160,6 +166,7 @@ class LotteryStore:
             participants=participants,
             user_groups=user_groups,
             participant_count=safe_int(record.get("participant_count"), None) or len(participants),
+            pending_items=pending_items,
             winners=winners,
             min_level=safe_int(record.get("min_level"), None) or 0,
             titles=titles,
@@ -191,6 +198,7 @@ class LotteryStore:
             "participants": lottery.participants,
             "user_groups": lottery.user_groups,
             "participant_count": lottery.participant_count,
+            "pending_items": lottery.pending_items,
             "winners": [list(item) for item in lottery.winners],
             "min_level": lottery.min_level,
             "titles": lottery.titles,

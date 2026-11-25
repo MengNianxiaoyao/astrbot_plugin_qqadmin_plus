@@ -39,6 +39,8 @@ class Lottery:
     user_groups: dict[str, str] = field(default_factory=dict)
     # 开奖时冻结的参与人数；历史记录会清空 participants，人数靠它保留
     participant_count: int = 0
+    # 预存奖品：中奖者 -> 待领取奖品内容；领取后删除
+    pending_items: dict[str, str] = field(default_factory=dict)
     winners: list[tuple[str, str]] = field(default_factory=list)
     min_level: int = 0
     titles: list[str] = field(default_factory=list)

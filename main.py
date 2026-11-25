@@ -42,8 +42,16 @@ from .permission import (
     perm_required_for,
     private_only,
 )
-from .utils import parse_bool
+from .utils import parse_bool, parse_cq_to_chain
 from .web import QQAdminWebController
+
+
+def lottery_result(event: AiocqhttpMessageEvent, text: str):
+    """抽奖回执：含 CQ at 码的公告解析成消息链，普通文本照常发送。"""
+    if "[CQ:" not in text:
+        return event.plain_result(text)
+    chain = parse_cq_to_chain(text)
+    return event.chain_result(chain) if chain else event.plain_result(text)
 
 
 class QQAdminPlugin(Star):
@@ -323,7 +331,7 @@ class QQAdminPlugin(Star):
     async def join_lottery(self, event: AiocqhttpMessageEvent):
         """参与本群正在进行的抽奖"""
         for text in await self.lottery.join_lottery(event):
-            yield event.plain_result(text)
+            yield lottery_result(event, text)
         event.stop_event()
 
     @filter.command("抽奖查询", alias={"查询抽奖"})
@@ -339,7 +347,7 @@ class QQAdminPlugin(Star):
     async def draw_lottery(self, event: AiocqhttpMessageEvent):
         """立即结束本群抽奖并开奖"""
         for text in await self.lottery.draw_now(event):
-            yield event.plain_result(text)
+            yield lottery_result(event, text)
         event.stop_event()
 
     @filter.command("取消抽奖", alias={"结束抽奖"})
@@ -347,6 +355,13 @@ class QQAdminPlugin(Star):
     async def cancel_lottery(self, event: AiocqhttpMessageEvent):
         """取消本群进行中的抽奖（不发奖、不留记录）"""
         for text in await self.lottery.cancel_lottery(event):
+            yield event.plain_result(text)
+        event.stop_event()
+
+    @filter.command("领奖")
+    async def claim_lottery(self, event: AiocqhttpMessageEvent):
+        """私聊领取预存奖品（普通成员也可用，不走权限门禁）"""
+        for text in await self.lottery.claim(event):
             yield event.plain_result(text)
         event.stop_event()
 

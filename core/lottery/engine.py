@@ -158,7 +158,7 @@ class LotteryEngine:
         if random.random() < chance:
             lottery.winners.append((user_id, nickname))
             remaining = lottery.copies - len(lottery.winners)
-            tail = await self.deliver_one(lottery, user_id, nickname)
+            tail = self._take_pending_item(lottery, user_id)
             texts = [f"恭喜 {nickname} 中奖：{lottery.prize}！{tail}（剩余 {remaining} 份）"]
         else:
             remaining = max(0, lottery.copies - len(lottery.winners))
@@ -248,8 +248,7 @@ class LotteryEngine:
             candidates = list(lottery.participants)
             winners = random.sample(candidates, k=min(lottery.copies, len(candidates)))
             lottery.winners = [(uid, lottery.participants[uid]) for uid in winners]
-            if lottery.delivery == "private":
-                await self.deliver_prizes(lottery)
+            self._assign_pending_items(lottery)
 
         # 开奖后历史只需要中奖明细：清空参与者与剩余库存，只保留中奖者所在的群
         winner_ids = {uid for uid, _ in lottery.winners}
@@ -319,56 +318,32 @@ class LotteryEngine:
         except Exception:
             return False
 
-    async def _send_dm(self, lottery: Lottery, user_id: str, message: str) -> bool:
-        """私聊发送统一入口；失败只记日志并返回 False。"""
-        client = await self.client_for(lottery)
-        if client is None:
-            return False
-        try:
-            await client.send_private_msg(user_id=int(user_id), message=message)
-            return True
-        except Exception as e:
-            logger.warning(f"抽奖私聊发送失败({user_id}): {e}")
-            return False
+    @staticmethod
+    def _assign_pending_items(lottery: Lottery):
+        """预存奖品按中奖顺序记到中奖者名下，等本人私聊「领奖」；不再主动私聊。"""
+        if lottery.delivery != "private":
+            return
+        items = lottery.stock
+        lottery.stock = []
+        for idx, (uid, _name) in enumerate(lottery.winners):
+            if idx < len(items) and items[idx]:
+                lottery.pending_items[uid] = items[idx]
 
-    async def _deliver_item(self, lottery: Lottery, user_id: str, nickname: str, item: str) -> bool:
-        """发放一份奖品：优先私聊中奖者，失败转交发起人并记录。"""
-        if await self._send_dm(lottery, user_id, f"【抽奖中奖】{lottery.prize}\n{item}"):
-            return True
-        forwarded = await self._send_dm(
-            lottery,
-            lottery.starter,
-            f"抽奖「{lottery.prize}」的奖品未能私聊发给 {nickname}（{user_id}），请手动发放：\n{item}",
-        )
-        if not forwarded:
-            logger.error(f"抽奖奖品转交发起人失败({lottery.starter})")
-        lottery.delivery_failures.append((user_id, nickname))
-        return False
-
-    async def deliver_one(self, lottery: Lottery, user_id: str, nickname: str) -> str:
-        """给单个中奖者私聊奖品，返回追加到开奖提示后的说明。"""
+    @staticmethod
+    def _take_pending_item(lottery: Lottery, user_id: str) -> str:
+        """即抽即开命中后取一份预存奖品记到名下，返回追加到提示后的说明。"""
         if lottery.delivery != "private":
             return "请联系发起人领取"
         item = lottery.stock.pop(0) if lottery.stock else ""
         if not item:
             return "请联系发起人领取"
-        if await self._deliver_item(lottery, user_id, nickname, item):
-            return "奖品已私聊发送，请查收"
-        return "奖品私聊发送失败，已转交发起人"
-
-    async def deliver_prizes(self, lottery: Lottery):
-        """时间/人数开奖后一次性给所有中奖者私聊奖品，失败的记入 delivery_failures。"""
-        items = lottery.stock
-        lottery.stock = []
-        for idx, (user_id, nickname) in enumerate(lottery.winners):
-            item = items[idx] if idx < len(items) else ""
-            if item:
-                await self._deliver_item(lottery, user_id, nickname, item)
+        lottery.pending_items[user_id] = item
+        return "预存奖品请私聊机器人发送「/领奖」"
 
     async def announce_result(
         self, lottery: Lottery, event: AiocqhttpMessageEvent | None = None, reason: str = ""
     ) -> list[str]:
-        """返回给调用方 yield 的文本；当前群不在这里发送，以便 AstrBot 附加 @/引用。"""
+        """返回给调用方 yield 的文本；当前群由入口解析 CQ at 码，其余群广播同内容。"""
         empty_text = "本次无人中奖" if lottery.participant_count else "无人参与，本次抽奖取消"
         text = "\n".join(
             result_lines(
@@ -379,6 +354,7 @@ class LotteryEngine:
                 show_drawn_at=False,
                 empty_text=empty_text,
                 remaining_hint=True,
+                mention_winners=True,
             )
         )
         if event is None:

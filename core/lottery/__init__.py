@@ -228,6 +228,26 @@ class LotteryHandle:
         await self.engine.broadcast(lottery, text, skip={event.get_group_id()})
         return [text]
 
+    async def claim(self, event: AiocqhttpMessageEvent) -> list[str]:
+        """私聊领取预存奖品；群聊调用只提示私聊。"""
+        if not event.is_private_chat():
+            return ["请私聊机器人发送「/领奖」领取预存奖品"]
+        await self.ensure_ready()
+        user_id = str(event.get_sender_id())
+        texts: list[str] = []
+        claimed = False
+        for lottery in [*self._active_values(), *self._history_values()]:
+            item = lottery.pending_items.pop(user_id, None)
+            if not item:
+                continue
+            texts.append(f"【{lottery.prize}】\n{item}")
+            claimed = True
+        if not texts:
+            return ["没有待领取的奖品"]
+        if claimed:
+            await self.save(immediate=True)
+        return texts
+
     async def query_lottery(
         self, event: AiocqhttpMessageEvent, keyword: str = "", index: int | None = None
     ) -> list[str]:

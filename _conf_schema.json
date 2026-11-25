@@ -375,17 +375,6 @@
         ],
         "default": "管理员"
       },
-      "set_group_special_title_me": {
-        "description": "申请头衔",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "成员"
-      },
       "set_group_kick": {
         "description": "踢了",
         "type": "string",
@@ -432,17 +421,6 @@
         ],
         "default": "管理员"
       },
-      "get_essence_msg_list": {
-        "description": "群精华",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "成员"
-      },
       "delete_msg": {
         "description": "撤回",
         "type": "string",
@@ -464,17 +442,6 @@
           "成员"
         ],
         "default": "管理员"
-      },
-      "get_group_notice": {
-        "description": "查看群公告",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "成员"
       },
       "set_group_portrait": {
         "description": "设置群头像",
@@ -522,29 +489,6 @@
         ],
         "default": "管理员"
       },
-      "lottery_join": {
-        "description": "参与抽奖",
-        "hint": "参与门槛（群等级/群头衔）在发起抽奖时按活动设置",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "成员"
-      },
-      "lottery_query": {
-        "description": "抽奖查询",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "成员"
-      },
       "lottery_draw": {
         "description": "立即开奖",
         "hint": "立即结束本群进行中的抽奖并开奖；多群联合时整场一起开奖",
@@ -580,17 +524,6 @@
         ],
         "default": "管理员"
       },
-      "get_group_member_list": {
-        "description": "群友信息",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "成员"
-      },
       "clear_group_member": {
         "description": "清理群友",
         "type": "string",
@@ -602,17 +535,6 @@
         ],
         "default": "管理员"
       },
-      "upload_group_file": {
-        "description": "上传群文件",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "成员"
-      },
       "delete_group_file": {
         "description": "删除群文件",
         "type": "string",
@@ -623,17 +545,6 @@
           "成员"
         ],
         "default": "管理员"
-      },
-      "view_group_file": {
-        "description": "查看群文件",
-        "type": "string",
-        "options": [
-          "超管",
-          "群主",
-          "管理员",
-          "成员"
-        ],
-        "default": "成员"
       }
     }
   },

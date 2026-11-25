@@ -170,6 +170,7 @@ class PermissionManager:
         perm_key: str,
         bot_perm: PermLevel = PermLevel.ADMIN,
         target_ids: list[str] | None = None,
+        public: bool = False,
     ) -> str | None:
         if event.platform_meta.name != "aiocqhttp":
             return "该工具仅支持通过 QQ 群聊调用"
@@ -183,6 +184,9 @@ class PermissionManager:
                 perm_key,
             )
             return "内部错误：权限系统尚未正确加载"
+
+        if public:
+            return None
 
         return await self.perm_block(
             event,
@@ -234,6 +238,7 @@ def perm_required(
     check_at: bool = True,
     allow_private: bool = False,
     check_quote: bool = False,
+    public: bool = False,
 ):
     """
     权限检查装饰器。
@@ -242,6 +247,7 @@ def perm_required(
     :param check_at: 是否检查“是否有权对被@者实施操作”。
     :param allow_private: 超管是否可在私聊中使用该命令；默认 False，私聊一律拒绝。
     :param check_quote: @ 为空时，是否把被引用消息的发送者当作操作目标一起校验。
+    :param public: 固定成员可用、不读权限配置；仍保留平台与私聊拦截。
     """
 
     def decorator(
@@ -276,6 +282,20 @@ def perm_required(
                     return
                 if not allow_private:
                     yield event.plain_result("该命令不支持私聊使用，请在群聊中使用")
+                    event.stop_event()
+                    return
+                if inspect.isasyncgenfunction(func):
+                    async for item in func(plugin_instance, event, *args, **kwargs):
+                        yield item
+                else:
+                    await cast(Awaitable[Any], func(plugin_instance, event, *args, **kwargs))
+                return
+
+            # 固定成员可用的公开命令：不读用户权限配置，但仍校验 Bot 自身权限
+            if public:
+                bot_level = await perm_manager.get_perm_level(event, event.get_self_id())
+                if bot_level > bot_perm:
+                    yield event.plain_result(f"我没{bot_perm}权限")
                     event.stop_event()
                     return
                 if inspect.isasyncgenfunction(func):

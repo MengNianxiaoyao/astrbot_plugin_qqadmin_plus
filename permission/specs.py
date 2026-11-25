@@ -26,6 +26,8 @@ class CommandSpec:
     llm_tool: str | None = None
     quote_target: bool = False
     """目标可由引用消息指定（@ 为空时生效），check_at 需连引用者一起校验。"""
+    public: bool = False
+    """固定成员可用、不读权限配置；仍保留平台与私聊拦截。"""
 
 
 # Keyed by command method name in QQAdminPlugin.
@@ -38,19 +40,19 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "set_group_special_title": CommandSpec(
         "set_group_special_title", PermLevel.OWNER, llm_tool="llm_set_group_special_title", quote_target=True
     ),
-    "set_group_special_title_me": CommandSpec("set_group_special_title_me", PermLevel.OWNER),
+    "set_group_special_title_me": CommandSpec("set_group_special_title_me", PermLevel.OWNER, public=True),
     "set_group_kick": CommandSpec("set_group_kick", llm_tool="llm_set_group_kick", quote_target=True),
     "set_group_block": CommandSpec("set_group_block", llm_tool="llm_set_group_block", quote_target=True),
     "set_group_admin": CommandSpec("admin", PermLevel.OWNER, check_at=False),
     "cancel_group_admin": CommandSpec("admin", PermLevel.OWNER, check_at=False),
     "set_essence_msg": CommandSpec("essence", llm_tool="llm_set_essence_msg"),
     "delete_essence_msg": CommandSpec("essence"),
-    "get_essence_msg_list": CommandSpec("get_essence_msg_list", llm_tool="llm_get_essence_msg_list"),
+    "get_essence_msg_list": CommandSpec("get_essence_msg_list", llm_tool="llm_get_essence_msg_list", public=True),
     "set_group_portrait": CommandSpec("set_group_portrait", llm_tool="llm_set_group_portrait"),
     "set_group_name": CommandSpec("set_group_name", llm_tool="llm_set_group_name"),
     "delete_msg": CommandSpec("delete_msg", PermLevel.MEMBER),
     "send_group_notice": CommandSpec("send_group_notice", llm_tool="llm_send_group_notice"),
-    "get_group_notice": CommandSpec("get_group_notice", PermLevel.MEMBER, llm_tool="llm_get_group_notice"),
+    "get_group_notice": CommandSpec("get_group_notice", PermLevel.MEMBER, llm_tool="llm_get_group_notice", public=True),
     # ---------- 投票 / 宵禁 ----------
     "start_vote_mute": CommandSpec("vote", quote_target=True),
     "agree_vote_mute": CommandSpec("vote"),
@@ -64,18 +66,20 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     # ---------- 抽奖 ----------
     # 发起仅超管私聊：main 的 private_only 先于权限判定拦截群聊，不走可配置的 perm_key
     "start_lottery": CommandSpec("lottery_start", bot_perm=PermLevel.MEMBER, check_at=False, allow_private=True),
-    "join_lottery": CommandSpec("lottery_join", bot_perm=PermLevel.MEMBER, check_at=False),
-    "query_lottery": CommandSpec("lottery_query", bot_perm=PermLevel.MEMBER, check_at=False),
+    "join_lottery": CommandSpec("lottery_join", bot_perm=PermLevel.MEMBER, check_at=False, public=True),
+    "query_lottery": CommandSpec("lottery_query", bot_perm=PermLevel.MEMBER, check_at=False, public=True),
     "draw_lottery": CommandSpec("lottery_draw", bot_perm=PermLevel.MEMBER, check_at=False),
     "cancel_lottery": CommandSpec("lottery_cancel", bot_perm=PermLevel.MEMBER, check_at=False),
     # ---------- 进群审批 / 群友管理 / 群文件 ----------
     "agree_add_group": CommandSpec("approve", allow_private=True, check_at=False),
     "refuse_add_group": CommandSpec("approve", allow_private=True, check_at=False),
-    "get_group_member_list": CommandSpec("get_group_member_list", PermLevel.MEMBER),
+    "get_group_member_list": CommandSpec("get_group_member_list", PermLevel.MEMBER, public=True),
     "clear_group_member": CommandSpec("clear_group_member", PermLevel.MEMBER),
-    "upload_group_file": CommandSpec("upload_group_file", PermLevel.MEMBER, llm_tool="llm_upload_group_file"),
+    "upload_group_file": CommandSpec(
+        "upload_group_file", PermLevel.MEMBER, llm_tool="llm_upload_group_file", public=True
+    ),
     "delete_group_file": CommandSpec("delete_group_file", llm_tool="llm_delete_group_file"),
-    "view_group_file": CommandSpec("view_group_file", PermLevel.MEMBER, llm_tool="llm_view_group_file"),
+    "view_group_file": CommandSpec("view_group_file", PermLevel.MEMBER, llm_tool="llm_view_group_file", public=True),
 }
 
 # 反向索引：llm_tool 名 -> 同一 CommandSpec。vote / curfew / approve
@@ -92,6 +96,7 @@ def perm_required_for(method_name: str) -> Callable[..., Callable[..., AsyncGene
         check_at=spec.check_at,
         allow_private=spec.allow_private,
         check_quote=spec.quote_target,
+        public=spec.public,
     )
 
 
@@ -123,6 +128,7 @@ def llm_guarded_for(
                 perm_key=spec.perm_key,
                 bot_perm=spec.bot_perm,
                 target_ids=target_ids,
+                public=spec.public,
             ):
                 yield error
                 return

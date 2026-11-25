@@ -47,7 +47,10 @@ def summary_lines(lottery: Lottery) -> list[str]:
     ]
     if len(lottery.groups) > 1:
         lines.append(f"参与群：{'、'.join(lottery.groups)}")
-    lines.append("奖品发放：" + ("开奖后机器人私聊发送" if lottery.delivery == "private" else "中奖者联系发起人领取"))
+    lines.append(
+        "奖品发放："
+        + ("开奖后私聊机器人发送「/领奖」领取" if lottery.delivery == "private" else "中奖者联系发起人领取")
+    )
     return lines
 
 
@@ -77,8 +80,9 @@ def result_lines(
     show_drawn_at: bool = True,
     empty_text: str = "无人中奖",
     remaining_hint: bool = False,
+    mention_winners: bool = False,
 ) -> list[str]:
-    """开奖公告与查询结果共用同一份名单/发放说明，避免两处文案漂移。"""
+    """开奖公告/查询结果的统一渲染；mention_winners 时中奖行尾追加 CQ at 码。"""
     head = f"{title}（{reason}）" if reason else title
     lines = [head, f"奖品：{lottery.prize}"]
     if len(lottery.groups) > 1:
@@ -94,13 +98,14 @@ def result_lines(
         for idx, (uid, name) in enumerate(lottery.winners, 1):
             group_id = lottery.user_groups.get(uid)
             suffix = f"｜群 {group_id}" if group_id else ""
-            lines.append(f"{idx}. {name}（{uid}）{suffix}")
+            # 公告里直接用 CQ at 码代替昵称，渲染出来就是 @中奖者
+            shown = f"[CQ:at,qq={uid}]" if mention_winners and uid.isdigit() else name
+            lines.append(f"{idx}. {shown}（{uid}）{suffix}")
         if lottery.delivery == "private":
-            if lottery.delivery_failures:
-                names = "、".join(f"{name}（{uid}）" for uid, name in lottery.delivery_failures)
-                lines.append(f"奖品已私聊发送；发送失败已转交发起人：{names}")
+            if lottery.pending_items:
+                lines.append("预存奖品请中奖者私聊机器人发送「/领奖」领取")
             else:
-                lines.append("奖品已私聊发送，请中奖者注意查收")
+                lines.append("预存奖品已领取")
         else:
             lines.append("请中奖者联系发起人领取奖品")
     else:
