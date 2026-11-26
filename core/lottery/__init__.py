@@ -208,7 +208,7 @@ class LotteryHandle:
                     f"且群头衔需为 {allowed} 之一（你当前 {level} 级、头衔：{title or '无'}）"
                 )
             return (
-                f"参与门槛：群等级需不低于 {lottery.min_level} 级，"
+                f"参与门槛：群等级需不低于 {lottery.min_level} 级"
                 f"或群头衔为 {allowed} 之一（你当前 {level} 级、头衔：{title or '无'}）"
             )
         if lottery.min_level and level < lottery.min_level:
@@ -247,7 +247,7 @@ class LotteryHandle:
     async def claim(self, event: AiocqhttpMessageEvent) -> list[str]:
         """私聊领取预存奖品；群聊调用只提示私聊。"""
         if not event.is_private_chat():
-            return ["请私聊机器人发送「/领奖」领取预存奖品"]
+            return ["请私聊机器人发送「领奖」领取预存奖品"]
         await self.ensure_ready()
         user_id = str(event.get_sender_id())
         texts: list[str] = []

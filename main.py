@@ -283,7 +283,7 @@ class QQAdminPlugin(Star):
 
     # ---------- 抽奖（业务在 core/lottery/） ----------
     @filter.command("发起抽奖")
-    @private_only("发起抽奖请私聊机器人使用（仅 Bot 管理员）")
+    @private_only("请私聊机器人发送「发起抽奖」使用（仅 Bot 管理员）")
     @perm_required_for("start_lottery")
     async def start_lottery(self, event: AiocqhttpMessageEvent):
         """私聊 Bot 管理员发起抽奖（奖品/开奖方式/份数/参与群/门槛）"""
@@ -323,6 +323,7 @@ class QQAdminPlugin(Star):
         event.stop_event()
 
     @filter.command("领奖")
+    @private_only("请私聊机器人发送「领奖」领取预存奖品")
     async def claim_lottery(self, event: AiocqhttpMessageEvent):
         """私聊领取预存奖品（普通成员也可用，不走权限门禁）"""
         for text in await self.app.lottery.claim(event):

@@ -8,14 +8,12 @@ from .models import Lottery, instant_chance, participant_total
 
 
 def threshold_text(lottery: Lottery) -> str:
-    parts = []
-    if lottery.min_level:
-        parts.append(f"群等级≥{lottery.min_level}")
-    if lottery.titles:
-        parts.append("头衔" + "/".join(f"「{title}」" for title in lottery.titles))
-    if len(parts) == 2 and lottery.threshold_all:
-        return "且".join(parts)
-    return "、".join(parts) or "无"
+    level = f"群等级≥{lottery.min_level}" if lottery.min_level else ""
+    titles = "头衔为" + "/".join(f"「{title}」" for title in lottery.titles) + "之一" if lottery.titles else ""
+    if level and titles:
+        # 用“且/或”明确两条门槛的关系，头衔多个时“之一”表示满足任意一个
+        return f"{level}{' 且 ' if lottery.threshold_all else ' 或 '}{titles}"
+    return level or titles or "无"
 
 
 def when_text(timestamp: float | None, tz: zoneinfo.ZoneInfo, fmt: str = "%m-%d %H:%M") -> str:
@@ -40,18 +38,17 @@ def join_progress_text(lottery: Lottery) -> str:
     return f"已参与（当前 {participant_total(lottery)} 人，{time_left_text(lottery)}）"
 
 
-def summary_lines(lottery: Lottery) -> list[str]:
-    """开始公告与进行中详情共用的基础字段。"""
-    lines = [
-        f"奖品：{lottery.prize}（{lottery.copies} 份）",
-        f"开奖方式：{lottery.label}",
-        f"参与门槛：{threshold_text(lottery)}",
-    ]
+def summary_lines(lottery: Lottery, *, include_prize: bool = True) -> list[str]:
+    """开始公告与进行中详情共用的基础字段；公告首行已带奖品时可省略奖品行。"""
+    lines: list[str] = []
+    if include_prize:
+        lines.append(f"奖品：{lottery.prize}（{lottery.copies} 份）")
+    lines.append(f"开奖方式：{lottery.label}")
+    lines.append(f"参与门槛：{threshold_text(lottery)}")
     if len(lottery.groups) > 1:
         lines.append(f"参与群：{'、'.join(lottery.groups)}")
     lines.append(
-        "奖品发放："
-        + ("开奖后私聊机器人发送「/领奖」领取" if lottery.delivery == "private" else "中奖者联系发起人领取")
+        "奖品发放：" + ("开奖后私聊机器人发送「领奖」领取" if lottery.delivery == "private" else "中奖者联系发起人领取")
     )
     return lines
 
@@ -105,7 +102,7 @@ def result_lines(
             lines.append(f"{idx}. {shown}（{uid}）{suffix}")
         if lottery.delivery == "private":
             if lottery.pending_items:
-                lines.append("预存奖品请中奖者私聊机器人发送「/领奖」领取")
+                lines.append("预存奖品请中奖者私聊机器人发送「领奖」领取")
             else:
                 lines.append("预存奖品已领取")
         else:

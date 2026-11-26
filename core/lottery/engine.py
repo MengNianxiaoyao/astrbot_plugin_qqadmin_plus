@@ -121,9 +121,11 @@ class LotteryEngine:
         return lottery
 
     async def announce_start(self, event: AiocqhttpMessageEvent, lottery: Lottery):
+        # 群待办只显示首行：把奖品与份数放进首行，避免只剩【抽奖开始】
+        head = f"【抽奖开始】{lottery.prize}（{lottery.copies} 份）"
         lines = [
-            "【抽奖开始】",
-            *summary_lines(lottery),
+            head,
+            *summary_lines(lottery, include_prize=False),
         ]
         if lottery.mode == "instant":
             if lottery.max_participants:
@@ -349,7 +351,7 @@ class LotteryEngine:
         if not item:
             return "请联系发起人领取"
         lottery.pending_items[user_id] = item
-        return "预存奖品请私聊机器人发送「/领奖」"
+        return "预存奖品请私聊机器人发送「领奖」"
 
     async def announce_result(
         self, lottery: Lottery, event: AiocqhttpMessageEvent | None = None, reason: str = ""
